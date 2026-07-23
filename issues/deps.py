@@ -86,6 +86,16 @@ def blocking(index: dict[int, IssueRecord], issue_id: int) -> list[IssueRecord]:
     return results
 
 
+def children(index: dict[int, IssueRecord], issue_id: int) -> list[IssueRecord]:
+    results = [
+        record
+        for record in index.values()
+        if not record.archived and record.issue.parent == issue_id
+    ]
+    results.sort(key=lambda r: r.id)
+    return results
+
+
 def find_cycle(index: dict[int, IssueRecord], edge_attr: str) -> list[int] | None:
     """DFS cycle detection over the graph formed by `edge_attr`
     ('blocked_by' -> list of ids, or 'parent' -> single id or None).

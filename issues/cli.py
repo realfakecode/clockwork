@@ -220,18 +220,22 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_show(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
-    if args.json:
+def _print_issue(record: IssueRecord, as_json: bool) -> None:
+    if as_json:
         print(json.dumps(record_to_dict(record, include_body=True), indent=2))
-        return 0
+        return
     issue = record.issue
     print(model.serialize_issue(issue, include_criteria=False), end="")
     if issue.acceptance_criteria:
         print("\nAcceptance criteria:")
         print(model.render_criteria(issue.acceptance_criteria))
     print(f"\n(feature: {record.feature}, path: {record.path}, archived: {record.archived})")
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    root = store_mod.find_root()
+    record = store_mod.get_issue(root, args.id)
+    _print_issue(record, args.json)
     return 0
 
 
@@ -376,8 +380,8 @@ def cmd_blocked(args: argparse.Namespace) -> int:
     if not pairs:
         print("(none)")
         return 0
-    for record, unsatisfied in pairs:
-        print(format_line(record, index, config) + f"  waiting on: {unsatisfied}")
+    for record, _ in pairs:
+        print(format_line(record, index, config))
     return 0
 
 
@@ -387,6 +391,25 @@ def cmd_blocking(args: argparse.Namespace) -> int:
     index = store_mod.load_index(root)
     records = deps_mod.blocking(index, args.id)
     print_records(records, args.json, index, config)
+    return 0
+
+
+def cmd_children(args: argparse.Namespace) -> int:
+    root = store_mod.find_root()
+    config = config_mod.load_config(root)
+    index = store_mod.load_index(root)
+    records = deps_mod.children(index, args.id)
+    print_records(records, args.json, index, config)
+    return 0
+
+
+def cmd_parent(args: argparse.Namespace) -> int:
+    root = store_mod.find_root()
+    record = store_mod.get_issue(root, args.id)
+    if record.issue.parent is None:
+        raise IssuesError(f"issue {args.id} has no parent")
+    parent_record = store_mod.get_issue(root, record.issue.parent)
+    _print_issue(parent_record, args.json)
     return 0
 
 
@@ -437,7 +460,7 @@ def cmd_release(args: argparse.Namespace) -> int:
 
     for record in targets:
         record.issue.assignee = None
-        if not args.keep_status:
+        if not args.keep_status and config_mod.status_bucket(config, record.issue.status) != "done":
             record.issue.status = config["unclaim_status"]
         store_mod.write_issue(record)
 
@@ -646,6 +669,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_blocking)
+
+    p = sub.add_parser("children", help="show issues whose parent is <id>")
+    p.add_argument("id", type=int)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_children)
+
+    p = sub.add_parser("parent", help="show the parent of <id>")
+    p.add_argument("id", type=int)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_parent)
 
     p = sub.add_parser("status", help="set an issue's status")
     p.add_argument("id", type=int)

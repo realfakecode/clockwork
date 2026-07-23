@@ -32,11 +32,8 @@ own criteria. That is what lets an attempt fail. After the worker stops,
 1. **Did the worker escalate?** If the ticket is already `needs-decision`, the worker
    raised a design question itself. Keep its `QUESTION:`/`PROPOSED DEFAULT:` comment,
    discard its half-finished code, and leave it for the design session.
-2. **Empty-diff gate.** A worker that changed no code outside `.scratch/` has not
-   implemented anything; a green pre-existing test suite would hide that, so this is
-   checked first.
-3. **Test-command gate.** Run `--validate` (if given) as a hard pass/fail gate.
-4. **Validator agent.** A fresh, read-only agent (`build_validator_prompt`) judges the
+2. **Test-command gate.** Run `--validate` (if given) as a hard pass/fail gate.
+3. **Validator agent.** A fresh, read-only agent (`build_validator_prompt`) judges the
    acceptance criteria the tests can't cover. It returns one of three verdicts:
    - **PASS** — the loop checks off every criterion, resolves the ticket, and commits.
    - **FAIL** — a failed attempt (below).
@@ -46,6 +43,13 @@ own criteria. That is what lets an attempt fail. After the worker stops,
 
    A missing verdict marker means a malformed judge, not a code failure — the loop
    re-runs the validator once before treating it as a fault.
+
+   A worker that changed no code outside `.scratch/` isn't an automatic fail: a retry
+   can land on a ticket already satisfied by earlier work, and a parent ticket can be
+   genuinely done once every child is. The loop tells the validator the diff was empty
+   instead of short-circuiting itself, so it stays skeptical — a green pre-existing
+   test suite proves nothing broke, not that anything was built — but still gets a
+   real judgment instead of an automatic failure.
 
 ## Failed attempts and escalation
 

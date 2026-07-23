@@ -202,12 +202,30 @@ Begin now.
 """
 
 
-def build_validator_prompt(issue: dict, design_path: str, vocab_path: str, test_summary: str) -> str:
-    """Read-only judge of a just-finished implementation against the criteria."""
+def build_validator_prompt(
+    issue: dict, design_path: str, vocab_path: str, test_summary: str, empty_diff: bool = False
+) -> str:
+    """Read-only judge of a just-finished implementation against the criteria.
+
+    `empty_diff` means the worker stopped without changing anything outside
+    `.scratch/`. That's not an automatic failure — a retry can land on a ticket
+    already satisfied by earlier work, or a parent ticket can be done once every
+    child is — so it's folded into the judging instructions as a skepticism flag
+    rather than handled as a separate gate."""
     ticket_id = issue["id"]
     title = issue.get("title", "")
     body = (issue.get("body") or "").strip()
     criteria = render_criteria(issue.get("acceptance_criteria") or [])
+    empty_diff_check = f"""
+0. EMPTY DIFF. The worker made NO changes outside `.scratch/`. This is only correct
+   if every acceptance criterion is ALREADY genuinely satisfied by the code as it
+   stands — e.g. a prior attempt or a different ticket already did this work, or
+   (for a parent ticket) every child ticket is done (check with `issues children
+   {ticket_id}` / `issues show <child-id>`). A green test-command result proves
+   nothing here — it just means nothing broke, not that anything was built. Verify
+   directly by reading the code and, for parent tickets, the children's status. If
+   you cannot fully confirm every criterion is already met this way, FAIL.
+""" if empty_diff else ""
 
     return f"""\
 You are a STRICT, independent validator. A worker just implemented ticket
@@ -235,7 +253,7 @@ below to catch a concept reimplemented under a new synonym.
 {test_summary}
 
 # Judge, in order
-
+{empty_diff_check}
 1. CORRECTNESS. Judge the criteria the test command does not fully cover (behavioural
    gaps, contradictions with the design doc, criteria with no corresponding test). Be
    skeptical: a passing test suite is necessary but not sufficient. If the work does not

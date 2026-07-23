@@ -124,9 +124,9 @@ class Clockwork:
         self.log("reset", ticket=ticket_id, ok=True)
 
     def _has_code_changes(self) -> bool:
-        """True if the worker touched anything outside `.scratch/`. A worker that
-        stops having changed no code has not implemented the ticket — the test gate
-        alone can't catch that (pre-existing tests stay green)."""
+        """True if the worker touched anything outside `.scratch/`. An empty diff
+        doesn't prove the ticket is unimplemented on its own — feeds the validator's
+        skepticism prompt instead of gating directly; see `_validate_and_finish`."""
         proc = subprocess.run(
             ["git", "status", "--porcelain", "--", ".", ":(exclude).scratch"],
             cwd=self.cwd, capture_output=True, text=True,
@@ -191,8 +191,8 @@ class Clockwork:
         """Commit triage's own output before the next dispatch. Triage now writes the
         repo tree (naming-registry edits), so an uncommitted diff would otherwise leak
         into the next worker's and the read-only validator's `git diff`/`git status`
-        view AND defeat the empty-diff gate (which would read a stray registry edit as
-        the worker's changes). Staging `.scratch` too keeps each phase's work atomic."""
+        view AND mislead `_has_code_changes` into reading a stray registry edit as
+        the worker's own changes. Staging `.scratch` too keeps each phase's work atomic."""
         ok, detail = self._git_commit_all(f"triage #{ticket_id}")
         if not ok:
             self.log("commit", ticket=ticket_id, stage="triage", ok=False, error=detail)
@@ -218,13 +218,6 @@ class Clockwork:
             self.log("escalate", ticket=ticket_id, reason="agent")
             return
 
-        # 0. Empty-diff gate: a worker that changed no code hasn't implemented the
-        #    ticket. Catch it before the test gate, which pre-existing tests pass.
-        if not self._has_code_changes():
-            self._fail_attempt(ticket_id, attempts,
-                               "validation failed (no changes): worker stopped without modifying any code")
-            return
-
         # 1. Hard test-command gate.
         tests_ok, summary = self._run_validation_command()
         self.log("validate", ticket=ticket_id, stage="tests", ok=tests_ok)
@@ -236,7 +229,16 @@ class Clockwork:
         #    verdict marker is a malformed judge, not a code failure — re-run the
         #    validator once before falling back to a worker retry, so a flaky
         #    verdict format doesn't burn a full re-implementation of correct code.
-        prompt = worker.build_validator_prompt(issue, self.args.design, self.args.vocab, summary)
+        #    A worker that changed no code outside `.scratch/` isn't automatically a
+        #    failure — a retry can land on a ticket already satisfied by earlier work,
+        #    and a parent ticket can be genuinely done once all its children are. The
+        #    validator is told so it stays skeptical rather than trusting a green
+        #    pre-existing test suite, which proves nothing changed, not that anything
+        #    was built.
+        prompt = worker.build_validator_prompt(
+            issue, self.args.design, self.args.vocab, summary,
+            empty_diff=not self._has_code_changes(),
+        )
         reply = await worker.drive(self.command, str(self.cwd), prompt)
         verdict, reason = worker.parse_verdict(reply)
         if verdict == "none":
