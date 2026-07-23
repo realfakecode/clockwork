@@ -239,12 +239,14 @@ class Clockwork:
             issue, self.args.design, self.args.vocab, summary,
             empty_diff=not self._has_code_changes(),
         )
-        reply = await worker.drive(self.command, str(self.cwd), prompt)
+        reply = await worker.drive(self.command, str(self.cwd), prompt,
+                                    label=f"validator #{ticket_id}")
         verdict, reason = worker.parse_verdict(reply)
         if verdict == "none":
             self.log("validate", ticket=ticket_id, stage="agent", ok=False,
                      reason="no verdict marker — re-running validator")
-            reply = await worker.drive(self.command, str(self.cwd), prompt)
+            reply = await worker.drive(self.command, str(self.cwd), prompt,
+                                       label=f"validator #{ticket_id} (retry)")
             verdict, reason = worker.parse_verdict(reply)
         passed = verdict == "pass"
         self.log("validate", ticket=ticket_id, stage="agent", ok=passed,
@@ -283,7 +285,8 @@ class Clockwork:
         self.log("triage", ticket=ticket_id, stage="start")
         issue = issues.show(ticket_id, cwd=self.cwd)
         prompt = worker.build_triage_prompt(issue, self.args.design, self.args.vocab)
-        await worker.drive(self.command, str(self.cwd), prompt)
+        await worker.drive(self.command, str(self.cwd), prompt,
+                           label=f"triage #{ticket_id}")
 
         status = issues.show(ticket_id, cwd=self.cwd).get("status")
         if status == "ready-for-agent":
@@ -361,7 +364,8 @@ class Clockwork:
         # 5. Run the worker to a stop, then validate before accepting.
         issue = issues.show(ticket_id, cwd=self.cwd)
         prompt = worker.build_worker_prompt(issue, args.design, args.vocab)
-        await worker.drive(self.command, str(self.cwd), prompt)
+        await worker.drive(self.command, str(self.cwd), prompt,
+                           label=f"worker #{ticket_id}")
         await self._validate_and_finish(ticket_id, attempts)
         return "continue"
 

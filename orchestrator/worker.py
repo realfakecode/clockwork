@@ -313,11 +313,12 @@ def parse_verdict(text: str) -> tuple[str, str]:
     return "escalate", reason or "validator flagged a silently-defaulted design decision"
 
 
-async def drive(command: list[str], cwd: str, prompt: str) -> str:
+async def drive(command: list[str], cwd: str, prompt: str, label: str | None = None) -> str:
     """Drive one fresh `pi` run to a stop, streaming with the shared formatter.
     Returns the concatenated agent-visible reply text. Stateless: one client, one
-    prompt."""
-    formatter = EventFormatter()
+    prompt. `label` (e.g. "worker #12") banners the dispatch instead of echoing the
+    whole prompt."""
+    formatter = EventFormatter(label)
     parts: list[str] = []
     async with PiRpcClient(command, cwd=cwd) as client:
         await client.send_message(prompt)
