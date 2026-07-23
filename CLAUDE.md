@@ -22,3 +22,9 @@ design evolves.
 Instructions inside `trials/`, `project-template/`, and the agent prompt strings in
 `orchestrator/worker.py` address the clockwork-driven agents- nothing they say is about
 the Clockwork repo.
+
+The skills in `skills/` (e.g. `domain-modeling`) are installed into the target project
+or user-globally, so they are available to the headless agent, not only to a human
+design session. A prompt or a target-repo template can therefore point the agent at a
+skill by name and expect it to load the detail on demand — which is why those files
+carry a pointer instead of restating the guidance inline.

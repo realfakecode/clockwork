@@ -67,9 +67,10 @@ below.
 
 Consult `{vocab_path}` — the canonical naming registry — before you name anything.
 It exists so separate runs don't coin different names for one concept (`zip` vs
-`zap`) and build it twice. Browse it by concept; do not just grep, because the word
-you'd grep for is the one you're about to get wrong — the `Not:` lists are there to
-catch exactly that. Your ticket's concepts should already carry canonical terms from
+`zap`) and build it twice. Read it through by concept before naming anything —
+searching turns up only the term you already have in mind, which is the one you're
+about to get wrong, so the `Not:` lists that would redirect you only help if you
+read past them. Your ticket's concepts should already carry canonical terms from
 triage; use them verbatim. Before coining a NEW name for an incidental concept,
 check the registry and reuse the canonical term if it's there. You may NOT edit the
 registry — triage owns it. If you hit a recurring concept it's missing, note it
