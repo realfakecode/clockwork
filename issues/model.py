@@ -185,7 +185,7 @@ def serialize_frontmatter(issue: Issue, *, include_criteria: bool = True) -> str
     dashes, newlines) is quoted/escaped correctly rather than hand-formatted.
 
     `include_criteria=False` drops `acceptance_criteria` from the dump — used by
-    `tracker show`, which renders criteria as a checklist and doesn't want them
+    `issues show`, which renders criteria as a checklist and doesn't want them
     duplicated in the raw YAML. The on-disk write path always keeps them."""
     data = issue.to_frontmatter_dict()
     ordered: dict = {}

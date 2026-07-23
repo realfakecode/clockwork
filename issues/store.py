@@ -15,7 +15,7 @@ ISSUES_DIRNAME = "issues"
 ARCHIVE_DIRNAME = "archive"
 
 
-class TrackerError(Exception):
+class IssuesError(Exception):
     """User-facing error: bad root, missing issue, bad input, etc."""
 
 
@@ -31,11 +31,11 @@ def _serialize_checked(issue: Issue) -> str:
     try:
         reparsed = model.parse_issue_text(text)
     except model.ParseError as exc:
-        raise TrackerError(
+        raise IssuesError(
             f"internal error: issue {issue.id} did not serialize to valid form: {exc}"
         ) from exc
     if model.serialize_issue(reparsed) != text:
-        raise TrackerError(
+        raise IssuesError(
             f"internal error: issue {issue.id} does not round-trip through serialization"
         )
     return text
@@ -59,8 +59,8 @@ def find_root(start: Path | None = None) -> Path:
     for candidate in (cur, *cur.parents):
         if (candidate / SCRATCH_DIRNAME).is_dir():
             return candidate
-    raise TrackerError(
-        "no .scratch/ found in this directory or any parent — run `tracker init` first"
+    raise IssuesError(
+        "no .scratch/ found in this directory or any parent — run `issues init` first"
     )
 
 
@@ -129,7 +129,7 @@ def get_issue(root: Path, issue_id: int) -> IssueRecord:
     index = load_index(root)
     record = index.get(issue_id)
     if record is None:
-        raise TrackerError(f"no issue with id {issue_id}")
+        raise IssuesError(f"no issue with id {issue_id}")
     return record
 
 

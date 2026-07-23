@@ -3,7 +3,7 @@ name: domain-modeling
 description: Build and sharpen a project's domain model against the canonical design doc. Use when pinning down terminology or a boundary dispute, or when design-session needs to resolve a term before deciding behaviour.
 ---
 
-# Domain Modeling (harness workflow)
+# Domain Modeling (clockwork workflow)
 
 Actively sharpen the project's domain model as you design. This is the *active* discipline
 — challenging terms, inventing edge-case scenarios, and writing decisions down the moment

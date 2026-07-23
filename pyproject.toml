@@ -13,8 +13,8 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 # One `uv tool install .` ships both entry points.
-harness = "orchestrator.cli:main"
-tracker = "issue_tracker.cli:main"
+clockwork = "orchestrator.cli:main"
+issues = "issues.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["harnesses", "issue_tracker", "orchestrator"]
+packages = ["harnesses", "issues", "orchestrator"]

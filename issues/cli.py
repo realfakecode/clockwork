@@ -14,7 +14,7 @@ from . import deps as deps_mod
 from . import lint as lint_mod
 from . import model
 from . import store as store_mod
-from .store import IssueRecord, TrackerError
+from .store import IssueRecord, IssuesError
 
 
 def read_text_arg(value: str | None) -> str | None:
@@ -107,14 +107,14 @@ def print_records(
 
 def check_status_known(config: dict, status: str) -> None:
     if status not in config_mod.all_statuses(config):
-        raise TrackerError(
+        raise IssuesError(
             f"unknown status '{status}'; accepted: {config_mod.status_help(config)}"
         )
 
 
 def check_category_known(config: dict, category: str | None) -> None:
     if category is not None and category not in (config.get("categories") or []):
-        raise TrackerError(
+        raise IssuesError(
             f"unknown category '{category}'; accepted: {config_mod.category_help(config)}"
         )
 
@@ -123,7 +123,7 @@ def check_transition(config: dict, current: str, target: str) -> None:
     if not config_mod.can_transition(config, current, target):
         allowed = config_mod.allowed_transitions(config, current)
         allowed_str = ", ".join(allowed) if allowed else "(none)"
-        raise TrackerError(
+        raise IssuesError(
             f"cannot move issue from '{current}' to '{target}'; "
             f"allowed from '{current}': {allowed_str} (use --force to override)"
         )
@@ -131,14 +131,14 @@ def check_transition(config: dict, current: str, target: str) -> None:
 
 def check_invariants(config: dict, status: str, category: str | None, criteria: list[dict]) -> None:
     if config_mod.requires_category(config, status) and not category:
-        raise TrackerError(
+        raise IssuesError(
             f"status '{status}' requires a category; set one of: "
             f"{config_mod.category_help(config)} (use --force to override)"
         )
     if config_mod.requires_criteria(config, status) and not criteria:
-        raise TrackerError(
+        raise IssuesError(
             f"status '{status}' requires at least one acceptance criterion — add with "
-            "`tracker criteria <id> --add ...` or `tracker new ... --criterion ...` "
+            "`issues criteria <id> --add ...` or `issues new ... --criterion ...` "
             "(use --force to override)"
         )
 
@@ -150,7 +150,7 @@ def check_invariants(config: dict, status: str, category: str | None, criteria: 
 
 def cmd_init(args: argparse.Namespace) -> int:
     root = store_mod.init_repo()
-    print(f"initialized tracker at {config_mod.scratch_dir(root)}")
+    print(f"initialized issue tracker at {config_mod.scratch_dir(root)}")
     return 0
 
 
@@ -161,7 +161,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     if status is None:
         todo = config.get("statuses", {}).get("todo") or []
         if not todo:
-            raise TrackerError("no default status available; pass --status")
+            raise IssuesError("no default status available; pass --status")
         status = todo[0]
     check_status_known(config, status)
     check_category_known(config, args.category)
@@ -279,7 +279,7 @@ def cmd_comment(args: argparse.Namespace) -> int:
     record = store_mod.get_issue(root, args.id)
     text = read_text_arg(args.body)
     if not text or not text.strip():
-        raise TrackerError("comment body is empty (pass --body or pipe via --body -)")
+        raise IssuesError("comment body is empty (pass --body or pipe via --body -)")
     now = datetime.now().replace(microsecond=0)
     record.issue.body = model.append_comment(record.issue.body, text.strip(), now)
     store_mod.write_issue(record)
@@ -303,7 +303,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
         return 0
 
     if args.id is None:
-        raise TrackerError("pass an issue id or --done")
+        raise IssuesError("pass an issue id or --done")
     record = store_mod.archive_issue(root, args.id)
     print(f"archived issue {record.id} -> {record.path}")
     return 0
@@ -427,12 +427,12 @@ def cmd_release(args: argparse.Namespace) -> int:
         ]
     else:
         if not args.ids:
-            raise TrackerError("pass issue id(s) or --all")
+            raise IssuesError("pass issue id(s) or --all")
         targets = []
         for issue_id in args.ids:
             record = index.get(issue_id)
             if record is None:
-                raise TrackerError(f"no issue with id {issue_id}")
+                raise IssuesError(f"no issue with id {issue_id}")
             targets.append(record)
 
     for record in targets:
@@ -534,7 +534,7 @@ def cmd_triage(args: argparse.Namespace) -> int:
 
 
 def cmd_help(args: argparse.Namespace) -> int:
-    """`tracker help [command]` — a discoverable alias for `--help`. With no
+    """`issues help [command]` — a discoverable alias for `--help`. With no
     topic it prints the top-level usage; with one it prints that subcommand's
     help. `_parser`/`_subparsers` are threaded in via set_defaults."""
     topic = args.topic
@@ -543,7 +543,7 @@ def cmd_help(args: argparse.Namespace) -> int:
         return 0
     subparser = args._subparsers.get(topic)
     if subparser is None:
-        raise TrackerError(f"unknown command '{topic}'; run `tracker help` for the list")
+        raise IssuesError(f"unknown command '{topic}'; run `issues help` for the list")
     subparser.print_help()
     return 0
 
@@ -554,7 +554,7 @@ def cmd_help(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="tracker", description="Plain-text issue tracker.")
+    parser = argparse.ArgumentParser(prog="issues", description="Plain-text issue tracker.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init", help="create .scratch/ + config")
@@ -697,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except TrackerError as exc:
+    except IssuesError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except FileNotFoundError as exc:

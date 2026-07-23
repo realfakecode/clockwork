@@ -1,18 +1,18 @@
 # Architecture
 
-How the `harness` loop turns tracker state into agent runs. The
+How the `clockwork` loop turns issue-tracker state into agent runs. The
 [README](../README.md) covers the state machine and the repo layout; this file is the
 mechanics behind one iteration. Code lives in `orchestrator/` (`loop.py`,
-`worker.py`, `tracker.py`, `formatter.py`).
+`worker.py`, `issues.py`, `formatter.py`).
 
 ## One iteration
 
-`Harness._step` (`orchestrator/loop.py`) runs serially — one ticket at a time:
+`Clockwork._step` (`orchestrator/loop.py`) runs serially — one ticket at a time:
 
 1. **Guard the queue.** If the `needs-decision` queue has reached `--queue-threshold`,
    stop and ask for a design session.
 2. **Pick work.** Take the first `ready-for-agent` ticket on the unclaimed frontier
-   (`tracker ready --unclaimed`). If there is none, fall back to a `needs-triage`
+   (`issues ready --unclaimed`). If there is none, fall back to a `needs-triage`
    ticket. Dispatch is checked before triage, so ready work never waits behind
    specification.
 3. **Dispatch.** Claim the ticket, mark it `in-progress`, and run one stateless agent
@@ -50,21 +50,21 @@ own criteria. That is what lets an attempt fail. After the worker stops,
 ## Failed attempts and escalation
 
 A failed attempt reverts the working tree, records the reason as a ticket comment, and
-bumps an `attempts:N` label (`tracker.bump_attempts`). Below `--max-attempts` the
+bumps an `attempts:N` label (`issues.bump_attempts`). Below `--max-attempts` the
 ticket returns to `ready-for-agent` with the failure note in its body, so the retry
 worker sees why the last try failed. At the cap it auto-escalates to `needs-decision`
 ("not ambiguous, just hard").
 
 `needs-decision` is the single escalation state, reached three ways: the worker raises
 a question, the validator catches a silently-defaulted decision, or a ticket exhausts
-its attempts. It lives in the `active` bucket, so `tracker ready` (todo bucket only)
+its attempts. It lives in the `active` bucket, so `issues ready` (todo bucket only)
 won't re-dispatch it until a design session moves it back.
 
 ## Triage
 
 When no ready work remains, `_triage` runs an agent (`build_triage_prompt`) to specify
 a bare `needs-triage` ticket. Triage fills in the description, acceptance criteria, and
-category, then promotes the ticket to `ready-for-agent`. The tracker's
+category, then promotes the ticket to `ready-for-agent`. The issue tracker's
 `require_category` / `require_acceptance_criteria` invariants reject that promotion
 until the work is actually done, so the loop just observes the resulting status —
 promoted, routed to `needs-info`, or (if the agent stalled) forced to `needs-info` so
@@ -79,19 +79,19 @@ and the validator only read the registry.
 Everything the worker leaves in the tree is committed wholesale when a ticket passes,
 so each phase ends with a clean tree: one commit per resolved ticket, one per triage
 run, and a revert on every non-accept exit. `.scratch/` is excluded from the revert —
-it *is* the tracker database, so the loop's own comments and labels survive. A stray
+it *is* the issue-tracker database, so the loop's own comments and labels survive. A stray
 uncommitted diff would otherwise pollute the next worker's and the read-only
 validator's `git diff` / `git status` view.
 
 ## The run log
 
 Every dispatch, triage, validation, commit, escalation, retry, and halt appends one
-JSON line to `.scratch/.harness-log.jsonl` (and echoes to stdout). It is the primary
+JSON line to `.scratch/.clockwork-log.jsonl` (and echoes to stdout). It is the primary
 instrument for a run — breakdowns show up here before they show up in code.
 
 ## Design canon and the naming registry
 
-The harness reads two documents in the target project, both addressed by CLI flag:
+Clockwork reads two documents in the target project, both addressed by CLI flag:
 
 - **`--design` (default `docs/design.md`)** — normative decisions, each an addressable
   `D-N` unit that workers, triage, and the validator cite. Design sessions patch it.

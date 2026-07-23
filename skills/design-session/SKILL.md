@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # design-session
 
-The execution phase is a dumb loop: the `harness` dispatches `ready-for-agent` tickets to
+The execution phase is a dumb loop: `clockwork` dispatches `ready-for-agent` tickets to
 a headless worker until design questions pile up in the `needs-decision` queue, then it
 halts. This skill is the **matched human phase** — a batched design session that drains
 that queue. Do the whole pile at once; answering escalations one at a time as they trickle
@@ -21,7 +21,7 @@ design. Don't let an answer *be* the resolution; the resolution is the emitted p
 The queue is non-empty:
 
 ```bash
-tracker list --status needs-decision --json
+issues list --status needs-decision --json
 ```
 
 If it's empty, there's nothing to do — say so and stop.
@@ -32,7 +32,7 @@ For each escalated ticket, read the `QUESTION:` / `PROPOSED DEFAULT:` the worker
 its comments, plus its acceptance criteria and body:
 
 ```bash
-tracker show <id> --json     # body carries the ## Comments with QUESTION/PROPOSED DEFAULT
+issues show <id> --json     # body carries the ## Comments with QUESTION/PROPOSED DEFAULT
 ```
 
 Also read the canonical design doc (default `docs/design.md`) so you resolve against
@@ -86,17 +86,17 @@ For **each** resolved question, do both halves. Neither is optional.
    staleness detectable and gives a precedence rule when copy and canon disagree.
 
    ```bash
-   tracker comment <id> --body "DECIDED (per D-<N>): <the derived instruction for this ticket>"
-   tracker status <id> ready-for-agent
+   issues comment <id> --body "DECIDED (per D-<N>): <the derived instruction for this ticket>"
+   issues status <id> ready-for-agent
    ```
 
    A `needs-decision → ready-for-agent` move is a legal transition. Category and
    acceptance criteria are already set from when the ticket was first routed, so the move
-   passes the tracker's invariants. If a decision means a question is out of scope, route
+   passes the issue tracker's invariants. If a decision means a question is out of scope, route
    it to `wontfix` (or `ready-for-human`) instead, with the same citation.
 
    If a decision changes what "done" means, update the acceptance criteria too
-   (`tracker criteria <id> --add/--remove ...`) so the harness's validation step checks the
+   (`issues criteria <id> --add/--remove ...`) so clockwork's validation step checks the
    right thing on the next attempt.
 
 ## Exit criterion (not just entry)
@@ -104,10 +104,10 @@ For **each** resolved question, do both halves. Neither is optional.
 Done means **both**: the `needs-decision` queue is empty **and** every decision is written
 into the design doc as a `D-N` entry with the tickets citing it. Emitting the patch + ticket
 updates *is* the done state. Formalization is the step you skip when tired — that's exactly
-the rot the harness exists to prevent, so don't stop until canon is patched. Verify:
+the rot clockwork exists to prevent, so don't stop until canon is patched. Verify:
 
 ```bash
-tracker list --status needs-decision    # must be empty
+issues list --status needs-decision    # must be empty
 ```
 
-Then tell the user the harness can be re-run (`harness`).
+Then tell the user clockwork can be re-run (`clockwork`).

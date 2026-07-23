@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Seed the tracker for this project: `tracker init` (its default config ships the full
+# Seed the issue tracker for this project: `issues init` (its default config ships the full
 # workflow) + create the serialized ticket chain. Re-running creates duplicate tickets,
-# so run once in a fresh checkout. Requires the `tracker` CLI on PATH.
+# so run once in a fresh checkout. Requires the `issues` CLI on PATH.
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 
 git init .
-tracker init
+issues init
 
 # 1 — lexer (the head of the chain; nothing blocks it)
-tracker new lexer "Tokenize arithmetic expressions" --category enhancement \
+issues new lexer "Tokenize arithmetic expressions" --category enhancement \
   --criterion "tokenizes integers and the symbols + - * / ( )" \
   --criterion "tests under tests/ cover the tokenizer and pass" \
   --status ready-for-agent --body - <<'EOF'
@@ -19,7 +19,7 @@ before starting.
 EOF
 
 # 2 — parser + evaluator (blocked by the lexer)
-tracker new parser "Parse and evaluate with precedence" --category enhancement \
+issues new parser "Parse and evaluate with precedence" --category enhancement \
   --blocked-by 1 \
   --criterion "calc.evaluate(str) -> int, respecting D-1 precedence and associativity" \
   --criterion "tests cover the D-1 worked examples through calc.evaluate and pass" \
@@ -30,14 +30,14 @@ examples with tests. Do not add the `/` operator; it is a separate ticket.
 EOF
 
 # 3 — CLI (blocked by the evaluator)
-tracker new cli "CLI entry point" --category enhancement \
+issues new cli "CLI entry point" --category enhancement \
   --blocked-by 2 \
   --status needs-triage --body - <<'EOF'
 A thin CLI over calc.evaluate: read the expression from argv, print the result.
 EOF
 
 # 4 — division operator (blocked by the evaluator)
-tracker new division "Support the / operator" --category enhancement \
+issues new division "Support the / operator" --category enhancement \
   --blocked-by 2 \
   --criterion "the / operator evaluates to an int" \
   --status ready-for-agent --body - <<'EOF'
@@ -46,4 +46,4 @@ EOF
 
 echo
 echo "Seeded. Frontier:"
-tracker ready --unclaimed
+issues ready --unclaimed

@@ -1,6 +1,6 @@
 # Trials
 
-Throwaway projects for exercising the `harness` end to end. Each fixture lives in its
+Throwaway projects for exercising `clockwork` end to end. Each fixture lives in its
 own subdirectory and is meant to read as a genuine greenfield project. **This guide
 stays here, outside the fixtures** — the worker, triage, and validator agents read the
 project tree they run on, so any file that describes the trial (the ambiguous ticket,
@@ -30,15 +30,15 @@ Run the fixture as its own project, outside the clockwork repo:
 
 ```bash
 cp -r trials/calc /tmp/calc && cd /tmp/calc  # create a throwaway copy
-./setup-tracker.sh                           # seed tracker config + the 4 tickets
+./setup-issues.sh                           # seed issue-tracker config + the 4 tickets
 python -m unittest discover -s tests -t .    # sanity: the scaffold test passes
 ```
 
 ### Run
 
 ```bash
-harness --once --validate "python -m unittest discover -s tests -t ."   # one iteration
-harness --validate "python -m unittest discover -s tests -t ."          # full loop
+clockwork --once --validate "python -m unittest discover -s tests -t ."   # one iteration
+clockwork --validate "python -m unittest discover -s tests -t ."          # full loop
 ```
 
 ### What to watch for
@@ -55,4 +55,4 @@ harness --validate "python -m unittest discover -s tests -t ."          # full l
 - **The validation seam** — `done` only after the tests pass *and* the validator agent
   agrees; a bad implementation bumps `attempts:N` and retries, then auto-escalates at
   `--max-attempts`.
-- **The log** — `.scratch/.harness-log.jsonl`, one JSON line per event.
+- **The log** — `.scratch/.clockwork-log.jsonl`, one JSON line per event.

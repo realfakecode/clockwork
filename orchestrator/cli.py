@@ -1,4 +1,4 @@
-"""`harness` entry point: kick off the dispatch loop against the current
+"""`clockwork` entry point: kick off the dispatch loop against the current
 directory's `.scratch/`."""
 
 from __future__ import annotations
@@ -6,13 +6,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from .loop import Harness
-from .tracker import TrackerCliError
+from .loop import Clockwork
+from .issues import IssuesCliError
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="harness",
+        prog="clockwork",
         description="Unattended ticket→implementation loop. Dispatches ready-for-agent "
         "tickets to a headless `pi` worker one at a time, escalating design "
         "questions to the `needs-decision` queue, until no workable ticket remains.",
@@ -48,8 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return asyncio.run(Harness(args).run())
-    except TrackerCliError as exc:
+        return asyncio.run(Clockwork(args).run())
+    except IssuesCliError as exc:
         print(f"error: {exc}", flush=True)
         return 1
     except KeyboardInterrupt:

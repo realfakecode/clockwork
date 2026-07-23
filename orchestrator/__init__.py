@@ -1,1 +1,1 @@
-"""Automated ticket→implementation loop: drives `pi` over `tracker` state."""
+"""Automated ticket→implementation loop: drives `pi` over issue-tracker state."""

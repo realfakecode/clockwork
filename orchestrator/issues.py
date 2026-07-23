@@ -1,10 +1,10 @@
-"""Thin wrapper over the real `tracker` CLI (dogfooding the same interface the
-worker uses). Every call shells out to `tracker … --json` and returns parsed
+"""Thin wrapper over the real `issues` CLI (dogfooding the same interface the
+worker uses). Every call shells out to `issues … --json` and returns parsed
 dicts; the loop makes decisions purely from the state observed here.
 
-The command is `tracker` on PATH by default (installed alongside `harness` by the
-same `uv tool install .`). Override with `HARNESS_TRACKER_CMD` for local dev,
-e.g. `HARNESS_TRACKER_CMD="uv run tracker"`.
+The command is `issues` on PATH by default (installed alongside `clockwork` by the
+same `uv tool install .`). Override with `CLOCKWORK_ISSUES_CMD` for local dev,
+e.g. `CLOCKWORK_ISSUES_CMD="uv run issues"`.
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ from pathlib import Path
 ATTEMPTS_PREFIX = "attempts:"
 
 
-class TrackerCliError(RuntimeError):
-    """A `tracker` invocation exited non-zero."""
+class IssuesCliError(RuntimeError):
+    """A `issues` invocation exited non-zero."""
 
     def __init__(self, argv: list[str], returncode: int, stderr: str):
-        super().__init__(f"tracker {' '.join(argv)} exited {returncode}: {stderr.strip()}")
+        super().__init__(f"issues {' '.join(argv)} exited {returncode}: {stderr.strip()}")
         self.argv = argv
         self.returncode = returncode
         self.stderr = stderr
 
 
 def _base_cmd() -> list[str]:
-    return shlex.split(os.environ.get("HARNESS_TRACKER_CMD", "tracker"))
+    return shlex.split(os.environ.get("CLOCKWORK_ISSUES_CMD", "issues"))
 
 
 def _run(args: list[str], *, cwd: str | Path | None = None) -> str:
@@ -38,7 +38,7 @@ def _run(args: list[str], *, cwd: str | Path | None = None) -> str:
         argv, cwd=cwd, capture_output=True, text=True
     )
     if proc.returncode != 0:
-        raise TrackerCliError(args, proc.returncode, proc.stderr)
+        raise IssuesCliError(args, proc.returncode, proc.stderr)
     return proc.stdout
 
 
@@ -87,7 +87,7 @@ def comment(issue_id: int, body: str, cwd: str | Path | None = None) -> None:
     argv = [*_base_cmd(), "comment", str(issue_id), "--body", "-"]
     proc = subprocess.run(argv, cwd=cwd, input=body, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise TrackerCliError(argv, proc.returncode, proc.stderr)
+        raise IssuesCliError(argv, proc.returncode, proc.stderr)
 
 
 def check_criterion(issue_id: int, index: int, cwd: str | Path | None = None) -> None:

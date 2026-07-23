@@ -1,6 +1,6 @@
-"""The dispatch loop: dumb by design. It shells out to `tracker`, runs one `pi`
+"""The dispatch loop: dumb by design. It shells out to `issues`, runs one `pi`
 worker per ready ticket, and decides everything from the status observed after
-each run. All intelligence lives in tracker state + the worker prompt.
+each run. All intelligence lives in issue-tracker state + the worker prompt.
 
 Serial dispatch only. The loop keeps going until no workable ticket remains
 (escalation queue full, nothing ready, or the safety cap) — see `run`.
@@ -14,9 +14,9 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import tracker, worker
+from . import issues, worker
 
-WORKER_ASSIGNEE = "harness"
+WORKER_ASSIGNEE = "clockwork"
 _OUTPUT_TAIL = 3000  # chars of validation output kept for the log/comment/validator
 
 
@@ -28,7 +28,7 @@ def _pi_command(model: str | None) -> list[str]:
 
 
 def _scratch_dir(cwd: Path) -> Path:
-    """Walk up from cwd for `.scratch/`, matching tracker's root discovery.
+    """Walk up from cwd for `.scratch/`, matching the issue tracker's root discovery.
     Falls back to cwd/.scratch so the first log line still lands somewhere sane."""
     for candidate in (cwd, *cwd.parents):
         if (candidate / ".scratch").is_dir():
@@ -36,12 +36,12 @@ def _scratch_dir(cwd: Path) -> Path:
     return cwd / ".scratch"
 
 
-class Harness:
+class Clockwork:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.cwd = Path.cwd()
         self.command = _pi_command(args.model)
-        self.log_path = _scratch_dir(self.cwd) / ".harness-log.jsonl"
+        self.log_path = _scratch_dir(self.cwd) / ".clockwork-log.jsonl"
 
     # -- the seam log ------------------------------------------------------
 
@@ -55,20 +55,20 @@ class Harness:
             with self.log_path.open("a") as fh:
                 fh.write(line + "\n")
         except OSError as exc:
-            print(f"[harness] could not write log: {exc}", flush=True)
-        print(f"[harness] {line}", flush=True)
+            print(f"[clockwork] could not write log: {exc}", flush=True)
+        print(f"[clockwork] {line}", flush=True)
 
     # -- escalation --------------------------------------------------------
 
     def _escalate(self, ticket_id: int, body: str) -> None:
-        """Route a ticket to the design queue and drop any harness claim so the
+        """Route a ticket to the design queue and drop any clockwork claim so the
         design session can reassign it cleanly."""
-        tracker.set_status(ticket_id, "needs-decision", cwd=self.cwd)
-        tracker.release(ticket_id, cwd=self.cwd, keep_status=True)
-        tracker.comment(ticket_id, body, cwd=self.cwd)
+        issues.set_status(ticket_id, "needs-decision", cwd=self.cwd)
+        issues.release(ticket_id, cwd=self.cwd, keep_status=True)
+        issues.comment(ticket_id, body, cwd=self.cwd)
 
     def _pick_ticket(self) -> dict | None:
-        for record in tracker.ready_unclaimed(self.cwd, feature=self.args.feature):
+        for record in issues.ready_unclaimed(self.cwd, feature=self.args.feature):
             if record.get("status") == "ready-for-agent":
                 return record
         return None
@@ -76,7 +76,7 @@ class Harness:
     def _pick_triage_ticket(self) -> dict | None:
         """A bare ticket on the unclaimed frontier awaiting specification. Only
         consulted when nothing is ready-for-agent, so dispatch never starves."""
-        for record in tracker.ready_unclaimed(self.cwd, feature=self.args.feature):
+        for record in issues.ready_unclaimed(self.cwd, feature=self.args.feature):
             if record.get("status") == "needs-triage":
                 return record
         return None
@@ -109,8 +109,8 @@ class Harness:
         non-accept exit. A failed or escalated worker's half-finished code must not
         leak into the next dispatch's or the read-only validator's `git diff`/`git
         status` view — the same clean-tree invariant `_commit_ticket` upholds on the
-        accept path. `.scratch/` is git-tracked (it *is* the tracker DB), so it is
-        excluded so tracker state survives: the failure comment/attempts label the
+        accept path. `.scratch/` is git-tracked (it *is* the issue-tracker DB), so it is
+        excluded so issue-tracker state survives: the failure comment/attempts label the
         loop is about to write, and a worker's own QUESTION escalation comment."""
         for argv in (
             ["git", "checkout", "HEAD", "--", ".", ":(exclude).scratch"],
@@ -138,8 +138,8 @@ class Harness:
         # written into .scratch below) survives the reset and the retry worker
         # starts from a clean tree.
         self._reset_worktree(ticket_id)
-        tracker.comment(ticket_id, note, cwd=self.cwd)
-        new_attempts = tracker.bump_attempts(ticket_id, attempts, cwd=self.cwd)
+        issues.comment(ticket_id, note, cwd=self.cwd)
+        new_attempts = issues.bump_attempts(ticket_id, attempts, cwd=self.cwd)
         self.log("retry", ticket=ticket_id, attempts=new_attempts)
         if new_attempts >= self.args.max_attempts:
             self._escalate(
@@ -148,10 +148,10 @@ class Harness:
             )
             self.log("escalate", ticket=ticket_id, reason="attempt-cap", attempts=new_attempts)
         else:
-            # Release clears the harness claim and resets to ready-for-agent so
+            # Release clears the clockwork claim and resets to ready-for-agent so
             # the ticket re-enters the unclaimed frontier next iteration. The
             # failure note is now in the ticket body, so the retry worker sees it.
-            tracker.release(ticket_id, cwd=self.cwd)
+            issues.release(ticket_id, cwd=self.cwd)
 
     def _git_commit_all(self, message: str) -> tuple[bool, str]:
         """Stage everything and commit. Returns (ok, detail): detail is the short
@@ -201,8 +201,8 @@ class Harness:
 
     def _accept(self, ticket_id: int, issue: dict) -> None:
         for i in range(len(issue.get("acceptance_criteria") or [])):
-            tracker.check_criterion(ticket_id, i, cwd=self.cwd)
-        tracker.resolve(
+            issues.check_criterion(ticket_id, i, cwd=self.cwd)
+        issues.resolve(
             ticket_id, cwd=self.cwd,
             answer="validated: test gate + independent validator both passed",
         )
@@ -210,7 +210,7 @@ class Harness:
         self.log("done", ticket=ticket_id)
 
     async def _validate_and_finish(self, ticket_id: int, attempts: int) -> None:
-        issue = tracker.show(ticket_id, cwd=self.cwd)
+        issue = issues.show(ticket_id, cwd=self.cwd)
         if issue.get("status") == "needs-decision":
             # Worker self-escalated (QUESTION comment already in .scratch). Discard
             # its half-done code but keep the escalation payload for the design phase.
@@ -273,17 +273,17 @@ class Harness:
     # -- triage (bare ticket -> ready-for-agent) ---------------------------
     #
     # A triage agent specifies a `needs-triage` ticket (description + criteria +
-    # category) and promotes it. The tracker's require_category/require_criteria
+    # category) and promotes it. The issue tracker's require_category/require_criteria
     # invariants reject the promotion until that's actually done, so the loop just
     # observes the resulting status — no separate validation step.
 
     async def _triage(self, ticket_id: int) -> None:
         self.log("triage", ticket=ticket_id, stage="start")
-        issue = tracker.show(ticket_id, cwd=self.cwd)
+        issue = issues.show(ticket_id, cwd=self.cwd)
         prompt = worker.build_triage_prompt(issue, self.args.design, self.args.vocab)
         await worker.drive(self.command, str(self.cwd), prompt)
 
-        status = tracker.show(ticket_id, cwd=self.cwd).get("status")
+        status = issues.show(ticket_id, cwd=self.cwd).get("status")
         if status == "ready-for-agent":
             self.log("triage", ticket=ticket_id, stage="done", status=status)
         elif status in ("needs-info", "ready-for-human", "wontfix"):
@@ -292,8 +292,8 @@ class Harness:
         else:
             # Still needs-triage: the agent didn't finish. Route to needs-info so
             # the same bare ticket isn't picked again next iteration, and surface it.
-            tracker.set_status(ticket_id, "needs-info", cwd=self.cwd)
-            tracker.comment(
+            issues.set_status(ticket_id, "needs-info", cwd=self.cwd)
+            issues.comment(
                 ticket_id,
                 "triage did not complete — routed to needs-info for human triage",
                 cwd=self.cwd,
@@ -310,7 +310,7 @@ class Harness:
         args = self.args
 
         # 1. Precondition — escalation queue not full.
-        queue = tracker.list_status("needs-decision", cwd=self.cwd)
+        queue = issues.list_status("needs-decision", cwd=self.cwd)
         if len(queue) >= args.queue_threshold:
             self.log("halt", reason="queue-threshold", queue=len(queue),
                      threshold=args.queue_threshold)
@@ -334,7 +334,7 @@ class Harness:
         ticket_id = ticket["id"]
 
         # 3. Attempt cap — a cursed ticket shouldn't burn the whole run.
-        attempts = tracker.read_attempts(ticket)
+        attempts = issues.read_attempts(ticket)
         if attempts >= args.max_attempts:
             if args.dry_run:
                 self.log("dry-run", would="escalate", ticket=ticket_id, attempts=attempts)
@@ -352,12 +352,12 @@ class Harness:
             return "stop:dry-run"
 
         # 4. Claim + mark in-progress.
-        tracker.claim(ticket_id, WORKER_ASSIGNEE, cwd=self.cwd)
-        tracker.set_status(ticket_id, "in-progress", cwd=self.cwd)
+        issues.claim(ticket_id, WORKER_ASSIGNEE, cwd=self.cwd)
+        issues.set_status(ticket_id, "in-progress", cwd=self.cwd)
         self.log("dispatch", ticket=ticket_id, title=ticket.get("title"), attempts=attempts)
 
         # 5. Run the worker to a stop, then validate before accepting.
-        issue = tracker.show(ticket_id, cwd=self.cwd)
+        issue = issues.show(ticket_id, cwd=self.cwd)
         prompt = worker.build_worker_prompt(issue, args.design, args.vocab)
         await worker.drive(self.command, str(self.cwd), prompt)
         await self._validate_and_finish(ticket_id, attempts)
@@ -374,7 +374,7 @@ class Harness:
         while True:
             if dispatches >= args.max_dispatches:
                 self.log("halt", reason="max-dispatches", dispatches=dispatches)
-                print("[harness] hit --max-dispatches safety cap.", flush=True)
+                print("[clockwork] hit --max-dispatches safety cap.", flush=True)
                 return 0
 
             token = await self._step()
@@ -389,9 +389,9 @@ class Harness:
 
     def _explain_stop(self, reason: str) -> None:
         if reason == "queue-threshold":
-            print("[harness] escalation queue is full — run a design session "
-                  "(`/design-session`) to clear it, then re-run harness.", flush=True)
+            print("[clockwork] escalation queue is full — run a design session "
+                  "(`/design-session`) to clear it, then re-run clockwork.", flush=True)
         elif reason == "no-ready":
-            print("[harness] no ready tickets — nothing workable remains.", flush=True)
+            print("[clockwork] no ready tickets — nothing workable remains.", flush=True)
         elif reason == "dry-run":
-            print("[harness] dry run: nothing dispatched.", flush=True)
+            print("[clockwork] dry run: nothing dispatched.", flush=True)

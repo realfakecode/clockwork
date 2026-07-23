@@ -1,19 +1,19 @@
 # Setting up a target project
 
-Scaffolding to drop into a project you want the `harness` to drive. The harness
+Scaffolding to drop into a project you want `clockwork` to drive. Clockwork
 operates on the current directory's `.scratch/`, so run it from the target project's
 root. These files belong to *that* project, not to clockwork — copy them in and adapt
 them.
 
-## 1. Initialize the tracker
+## 1. Initialize the issue tracker
 
 ```bash
-tracker init
+issues init
 ```
 
-The tracker's default config already ships the full state machine the harness needs,
+The issue tracker's default config already ships the full state machine clockwork needs,
 so there is nothing to overwrite. In particular it puts the escalation state
-`needs-decision` in the `active` bucket, which keeps it out of `tracker ready` (todo
+`needs-decision` in the `active` bucket, which keeps it out of `issues ready` (todo
 bucket only) so escalated tickets don't re-enter the frontier until a design session
 routes them back.
 
@@ -44,10 +44,10 @@ tests, the build layout, the testing discipline.
 ## 5. Create tickets
 
 Give each ticket a **category** and at least one concrete **acceptance criterion**
-before moving it to `ready-for-agent` (the tracker enforces both):
+before moving it to `ready-for-agent` (the issue tracker enforces both):
 
 ```bash
-tracker new lexer "Tokenize integer literals" \
+issues new lexer "Tokenize integer literals" \
   --category enhancement \
   --criterion "tokenizes 0 and multi-digit integers" \
   --criterion "tests pass" \
@@ -73,9 +73,9 @@ cp -r skills/* /path/to/target/.claude/skills/   # project-local
 ## 7. Run
 
 ```bash
-harness --validate "uv run pytest -q"   # full loop, with the test command as the hard gate
-harness --once --validate "..."         # dispatch a single ticket
-harness --dry-run                        # show what would be dispatched, change nothing
+clockwork --validate "uv run pytest -q"   # full loop, with the test command as the hard gate
+clockwork --once --validate "..."         # dispatch a single ticket
+clockwork --dry-run                        # show what would be dispatched, change nothing
 ```
 
 Point `--validate` at the project's test command. The worker implements and stops; the
@@ -83,7 +83,7 @@ loop then validates (test gate + an independent validator agent) before it check
 criteria and resolves. A failure bumps the `attempts:N` label and retries, escalating
 at `--max-attempts`. The loop keeps dispatching until the `needs-decision` queue hits
 `--queue-threshold`, nothing is ready, or the `--max-dispatches` cap trips. Inspect
-`.scratch/.harness-log.jsonl` for one JSON line per event.
+`.scratch/.clockwork-log.jsonl` for one JSON line per event.
 
 When the queue has escalations, drain it in Claude Code with `/design-session`, then
-re-run `harness`.
+re-run `clockwork`.

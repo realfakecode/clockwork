@@ -7,5 +7,5 @@ Stub — not implemented yet. The tests and the CLI both expect a top-level
 
 def evaluate(expr: str) -> int:
     raise NotImplementedError(
-        "not built yet — see the tickets under .scratch/ (run `tracker ready`)"
+        "not built yet — see the tickets under .scratch/ (run `issues ready`)"
     )

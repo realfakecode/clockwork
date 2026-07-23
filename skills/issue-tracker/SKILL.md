@@ -1,18 +1,18 @@
 ---
 name: issue-tracker
-description: Agent-friendly man page for `tracker`, the plain-text issue-tracker CLI — statuses, storage, and command/flag reference. Use whenever you run `tracker`.
+description: Agent-friendly man page for `issues`, the plain-text issue-tracker CLI — statuses, storage, and command/flag reference. Use whenever you run `issues`.
 ---
 
 # issue-tracker
 
-`tracker` is a plain-text issue tracker: markdown + YAML frontmatter under `.scratch/`,
-global monotonic ids, automatic dependency resolution, archiving, lint. `tracker <command>
+`issues` is a plain-text issue tracker: markdown + YAML frontmatter under `.scratch/`,
+global monotonic ids, automatic dependency resolution, archiving, lint. `issues <command>
 --help` is the exhaustive, always-current flag reference — trust it (and any error message
 that enumerates accepted values) over prose.
 
 ## Running it
 
-`tracker <command> ...` — it's on PATH. Root discovery walks up from the cwd looking for
+`issues <command> ...` — it's on PATH. Root discovery walks up from the cwd looking for
 `.scratch/`, so any subdirectory works.
 
 Any body/comment/answer flag accepts `-` to read from stdin (`--body -`, `--answer -`) —
@@ -20,14 +20,14 @@ use it for multi-line text via a heredoc. Most read commands take `--json`.
 
 ## The state model
 
-The default config (written in full to `.scratch/.tracker.yaml` by `tracker init`) defines
+The default config (written in full to `.scratch/.issues.yaml` by `issues init`) defines
 three buckets:
 
 - **todo bucket**: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `open`
 - **active bucket**: `in-progress`, `needs-decision`
 - **done bucket**: `done`, `wontfix`
 
-`tracker ready` returns only the **todo** bucket; active and done statuses are excluded.
+`issues ready` returns only the **todo** bucket; active and done statuses are excluded.
 
 Transitions (checked unless `--force`):
 
@@ -51,7 +51,6 @@ non-empty **acceptance-criteria** checklist.
 
 ```
 .scratch/
-  .tracker.yaml                      # config: full statuses+transitions maps (`tracker init`)
   <feature>/
     issues/<id>-<slug>.md            # active issues
     archive/<id>-<slug>.md           # archived (still resolve dependencies)
@@ -61,7 +60,7 @@ Never hand-edit frontmatter or filenames — every field has a command that writ
 correctly. Editing body prose outside the frontmatter (the title/question/spec text and
 `## Comments`) is fine.
 
-## Commands (essentials — `tracker <cmd> --help` for all flags)
+## Commands (essentials — `issues <cmd> --help` for all flags)
 
 - **`new <feature> <title>`** — `--category --status --criterion "<text>"` (repeatable)
   `--label --parent --blocked-by 1,2 --body - --force --json`.

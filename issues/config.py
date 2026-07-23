@@ -1,4 +1,4 @@
-"""Load/save `.tracker.yaml`, defaults, status buckets, id allocation."""
+"""Load/save `.issues.yaml`, defaults, status buckets, id allocation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_FILENAME = ".tracker.yaml"
+CONFIG_FILENAME = ".issues.yaml"
 SCRATCH_DIRNAME = ".scratch"
 
 BUCKETS = ("todo", "active", "done")
@@ -18,7 +18,7 @@ def default_config() -> dict:
         "statuses": {
             "todo": ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "open"],
             # `needs-decision` is the escalation state: it lives in `active`, not
-            # `todo`, so `tracker ready` (todo bucket only) never re-dispatches an
+            # `todo`, so `issues ready` (todo bucket only) never re-dispatches an
             # escalated ticket while it waits on a human design decision.
             "active": ["in-progress", "needs-decision"],
             "done": ["done", "wontfix"],

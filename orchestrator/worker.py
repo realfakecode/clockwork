@@ -36,7 +36,7 @@ def render_criteria(criteria: list[dict]) -> str:
 
 
 def build_worker_prompt(issue: dict, design_path: str, vocab_path: str) -> str:
-    """Per-ticket worker prompt from `tracker show <id> --json`."""
+    """Per-ticket worker prompt from `issues show <id> --json`."""
     ticket_id = issue["id"]
     title = issue.get("title", "")
     body = (issue.get("body") or "").strip()
@@ -45,7 +45,7 @@ def build_worker_prompt(issue: dict, design_path: str, vocab_path: str) -> str:
     return f"""\
 You are an unattended implementation worker. Implement exactly one ticket, end to
 end. Do not ask the human anything — either proceed with a logged default or
-hard-block via the tracker (rules below).
+hard-block via the issue tracker (rules below).
 
 # Your ticket — #{ticket_id}: {title}
 
@@ -73,7 +73,7 @@ catch exactly that. Your ticket's concepts should already carry canonical terms 
 triage; use them verbatim. Before coining a NEW name for an incidental concept,
 check the registry and reuse the canonical term if it's there. You may NOT edit the
 registry — triage owns it. If you hit a recurring concept it's missing, note it
-rather than silently coining: `tracker comment {ticket_id} --body "assumption:
+rather than silently coining: `issues comment {ticket_id} --body "assumption:
 <concept> is unregistered; used <name>"` for triage or a design session to fold in.
 
 # Workflow rules
@@ -88,7 +88,7 @@ rather than silently coining: `tracker comment {ticket_id} --body "assumption:
 2. ROUTINE decision — a sensible default exists that any careful implementer would
    pick and the human is unlikely to have an opinion on (naming, file/module layout,
    the error type for bad input, how an edge case is handled): proceed with the
-   default and log it — `tracker comment {ticket_id} --body "assumption: <what and why>"`.
+   default and log it — `issues comment {ticket_id} --body "assumption: <what and why>"`.
 
 3. GENUINE DESIGN DECISION — escalate instead of guessing, when EITHER:
    - the ticket or a `D-N` explicitly marks a point as open ("do not guess",
@@ -98,8 +98,8 @@ rather than silently coining: `tracker comment {ticket_id} --body "assumption:
      different things and the human would have a real preference between them (not
      just a different mechanism to the same end).
    Then STOP. Do not guess:
-     `tracker status {ticket_id} needs-decision`
-     `tracker comment {ticket_id} --body "QUESTION: <the decision> PROPOSED DEFAULT: <your best call>"`
+     `issues status {ticket_id} needs-decision`
+     `issues comment {ticket_id} --body "QUESTION: <the decision> PROPOSED DEFAULT: <your best call>"`
    Every escalation MUST carry a proposed default. Then end your turn.
 
    Escalate what is undecided or contested, not merely what is user-visible: a
@@ -173,18 +173,18 @@ and build it twice. You are its only writer, so as you specify this ticket:
 
 1. Write a detailed, self-contained description a worker could implement without
    guessing intent:
-     `tracker edit {ticket_id} --body "<the full description>"`
+     `issues edit {ticket_id} --body "<the full description>"`
 
 2. Add concrete, independently checkable acceptance criteria (repeat --add):
-     `tracker criteria {ticket_id} --add "<criterion>"`
+     `issues criteria {ticket_id} --add "<criterion>"`
    Each criterion should be objectively verifiable (a behaviour, an output, a
    file/API shape) — not "works correctly".
 
 3. Set a category (enhancement / bug):
-     `tracker edit {ticket_id} --category <category>`
+     `issues edit {ticket_id} --category <category>`
 
 4. When the ticket is fully specified, promote it:
-     `tracker status {ticket_id} ready-for-agent`
+     `issues status {ticket_id} ready-for-agent`
    This is REJECTED until a description, at least one acceptance criterion, and a
    category are all present — that rejection is the definition of "not done yet".
    Fix what it reports and retry. A successful promotion ends triage — then STOP.
@@ -194,8 +194,8 @@ and build it twice. You are its only writer, so as you specify this ticket:
 If the ticket needs a human product/scope decision you cannot responsibly make
 (genuinely ambiguous intent, not just an implementation detail), do NOT guess.
 Escalate instead of promoting:
-  `tracker comment {ticket_id} --body "QUESTION: <the decision> PROPOSED DEFAULT: <your best call>"`
-  `tracker status {ticket_id} needs-info`
+  `issues comment {ticket_id} --body "QUESTION: <the decision> PROPOSED DEFAULT: <your best call>"`
+  `issues status {ticket_id} needs-info`
 Then STOP.
 
 Begin now.
@@ -213,7 +213,7 @@ def build_validator_prompt(issue: dict, design_path: str, vocab_path: str, test_
 You are a STRICT, independent validator. A worker just implemented ticket
 #{ticket_id} and stopped. Your job is to decide whether every acceptance criterion
 is genuinely satisfied. You are READ-ONLY: do not modify any file, do not run the
-worker's fixups, only read-only `tracker` commands. Inspect the working tree
+worker's fixups, only read-only `issues` commands. Inspect the working tree
 (`git diff`, `git status`, read files, run read-only checks) to judge the work.
 
 # Ticket #{ticket_id}: {title}
@@ -231,7 +231,7 @@ one past the scope its **Why:** bounds.
 `{vocab_path}` — the canonical name for each concept. Used in the correctness check
 below to catch a concept reimplemented under a new synonym.
 
-## Test-command result (already run by the harness)
+## Test-command result (already run by clockwork)
 {test_summary}
 
 # Judge, in order
