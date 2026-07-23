@@ -1,8 +1,5 @@
-"""Streaming pretty-printer for `PiRpcClient` events.
-
-Factored out of `main.py` so both the smoke-test demo and the worker loop share
-one renderer.
-"""
+"""Streaming pretty-printer for `PiRpcClient` events, shared by every agent run
+the loop drives (`worker.drive`)."""
 
 from __future__ import annotations
 
