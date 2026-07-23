@@ -24,8 +24,12 @@ The default config (written in full to `.scratch/.issues.yaml` by `issues init`)
 three buckets:
 
 - **todo bucket**: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `open`
-- **active bucket**: `in-progress`, `needs-decision`
+- **active bucket**: `in-progress`, `needs-decision`, `wayfinding`
 - **done bucket**: `done`, `wontfix`
+
+`wayfinding` marks a `/wayfinder` map issue (the parent that holds an effort's Destination,
+fog, and out-of-scope prose; its build tickets are children). It is `active` so it stays out
+of `issues ready` and never counts as escalation work.
 
 `issues ready` returns only the **todo** bucket; active and done statuses are excluded.
 
@@ -38,6 +42,7 @@ ready-for-agent -> in-progress, ready-for-human, needs-info, needs-decision, won
 ready-for-human -> in-progress, ready-for-agent, needs-info, wontfix
 in-progress     -> done, ready-for-agent, ready-for-human, needs-decision, wontfix
 needs-decision  -> ready-for-agent, ready-for-human, wontfix
+wayfinding      -> done, wontfix
 open            -> in-progress, ready-for-agent, ready-for-human, wontfix, needs-info
 done            -> (terminal)
 wontfix         -> needs-triage

@@ -43,8 +43,14 @@ tests, the build layout, the testing discipline.
 
 ## 5. Create tickets
 
-Give each ticket a **category** and at least one concrete **acceptance criterion**
-before moving it to `ready-for-agent` (the issue tracker enforces both):
+Seed the tracker by running the `wayfinder` skill (`/wayfinder`) on the idea: it charts a
+map issue for the effort and files the initial build tickets as thin `needs-triage`
+children, wired with blocking edges, leaving the rest as fog for a later pass. That is the
+bootstrap phase — see [skills/README.md](../skills/README.md).
+
+To file a ticket by hand instead, give it a **category** and at least one concrete
+**acceptance criterion** before moving it to `ready-for-agent` (the issue tracker enforces
+both):
 
 ```bash
 issues new lexer "Tokenize integer literals" \

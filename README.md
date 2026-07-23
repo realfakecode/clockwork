@@ -7,8 +7,12 @@ thin ticket, implement a ready one, or hand a design question to a human. The
 intelligence lives in that issue-tracker state plus the agent prompts, so the loop
 itself stays small.
 
-Two phases alternate:
+A **charting** phase seeds the work, then two runtime phases alternate:
 
+- **Charting** — a human runs the `wayfinder` skill on a loose idea to seed the tracker:
+  it files the initial build tickets (thin, wired with blocking edges) under a map issue,
+  and settles the up-front decisions into the design doc. Run once to bootstrap, and again
+  to graduate fog as the frontier advances.
 - **Execution** — `clockwork` runs unattended, driving a headless agent over ready
   tickets and parking design questions in a queue.
 - **Design** — a human runs the `design-session` skill to drain that queue, then
@@ -26,6 +30,7 @@ picks the next action from it:
 | `ready-for-agent` | todo | **worker agent** implements it → `in-progress`, then validation |
 | `in-progress` | active | worker has stopped; the loop validates and moves it to `done`, back to `ready-for-agent` (retry), or `needs-decision` |
 | `needs-decision` | active | nothing automated — waits for a **human design session**, which routes it back to `ready-for-agent` |
+| `wayfinding` | active | not a work ticket — a `wayfinder` map that holds an effort's tickets as children; the loop ignores it |
 | `done` / `wontfix` | done | terminal |
 
 Ready work always wins over triage, so the frontier never starves. When the
@@ -61,9 +66,9 @@ files meant for the **target** project with files that belong to clockwork itsel
   the fixture, so it can't leak into the agent's view.
 
 - **`skills/`** — Agent skills the workflow uses, installed into the project
-  clockwork runs against or globally (`design-session` for the human phase,
-  plus `issue-tracker`, `grilling`, `domain-modeling`).
-  See [skills/README.md](skills/README.md).
+  clockwork runs against or globally (`wayfinder` for the charting phase,
+  `design-session` for the human design phase, plus `issue-tracker`, `grilling`,
+  `domain-modeling`). See [skills/README.md](skills/README.md).
 
 ## Install and run
 

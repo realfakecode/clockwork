@@ -20,7 +20,14 @@ def default_config() -> dict:
             # `needs-decision` is the escalation state: it lives in `active`, not
             # `todo`, so `issues ready` (todo bucket only) never re-dispatches an
             # escalated ticket while it waits on a human design decision.
-            "active": ["in-progress", "needs-decision"],
+            #
+            # `wayfinding` marks a `/wayfinder` map — the parent issue that holds an
+            # effort's Destination, fog, and out-of-scope prose, with the build tickets
+            # as its children. It sits in `active` for the same reason: out of `issues
+            # ready`, so the clockwork loop can neither dispatch nor triage the map
+            # itself, only its `needs-triage` children. It is not `needs-decision`, so
+            # it never counts toward the escalation-queue threshold.
+            "active": ["in-progress", "needs-decision", "wayfinding"],
             "done": ["done", "wontfix"],
         },
         "categories": ["bug", "enhancement"],
@@ -35,6 +42,9 @@ def default_config() -> dict:
             "in-progress": ["done", "ready-for-agent", "ready-for-human", "needs-decision", "wontfix"],
             # A design session drains `needs-decision` back onto the frontier.
             "needs-decision": ["ready-for-agent", "ready-for-human", "wontfix"],
+            # A map is created directly in `wayfinding` and only ever closes once its
+            # effort is executed; nothing transitions into it.
+            "wayfinding": ["done", "wontfix"],
             "open": ["in-progress", "ready-for-agent", "ready-for-human", "wontfix", "needs-info"],
             "done": [],
             "wontfix": ["needs-triage"],
