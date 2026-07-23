@@ -60,9 +60,10 @@ files meant for the **target** project with files that belong to clockwork itsel
   operator guide that explains what to watch for lives at `trials/README.md`, *outside*
   the fixture, so it can't leak into the agent's view.
 
-- **`skills/`** — Claude Code skills the workflow uses, installed into the project
-  clockwork runs against (`design-session` for the human phase, plus `issue-tracker`,
-  `grilling`, `domain-modeling`). See [skills/README.md](skills/README.md).
+- **`skills/`** — Agent skills the workflow uses, installed into the project
+  clockwork runs against or globally (`design-session` for the human phase,
+  plus `issue-tracker`, `grilling`, `domain-modeling`).
+  See [skills/README.md](skills/README.md).
 
 ## Install and run
 

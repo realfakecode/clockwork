@@ -59,18 +59,7 @@ the review bottleneck. Use `--blocked-by <id>` to serialize a chain; a blocked t
 only becomes ready once its blockers are `done`. File thin tickets as `needs-triage`
 and let the triage agent specify them.
 
-## 6. Install the skills
-
-The design phase runs in Claude Code via the `design-session` skill. Install the
-repo's skills so Claude Code picks them up in the target project:
-
-```bash
-# from the clockwork repo:
-cp -r skills/* ~/.claude/skills/                 # user-global, or:
-cp -r skills/* /path/to/target/.claude/skills/   # project-local
-```
-
-## 7. Run
+## 6. Run
 
 ```bash
 clockwork --validate "uv run pytest -q"   # full loop, with the test command as the hard gate
@@ -85,5 +74,3 @@ at `--max-attempts`. The loop keeps dispatching until the `needs-decision` queue
 `--queue-threshold`, nothing is ready, or the `--max-dispatches` cap trips. Inspect
 `.scratch/.clockwork-log.jsonl` for one JSON line per event.
 
-When the queue has escalations, drain it in Claude Code with `/design-session`, then
-re-run `clockwork`.
