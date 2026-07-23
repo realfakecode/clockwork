@@ -27,6 +27,15 @@ def _pi_command(model: str | None) -> list[str]:
     return cmd
 
 
+def _log_ticket(line: str) -> int | None:
+    """The `ticket` field of one run-log JSON line, or None if it has none / is
+    malformed. Used to slice the log to a single effort's tickets."""
+    try:
+        return json.loads(line).get("ticket")
+    except ValueError:
+        return None
+
+
 def _scratch_dir(cwd: Path) -> Path:
     """Walk up from cwd for `.scratch/`, matching the issue tracker's root discovery.
     Falls back to cwd/.scratch so the first log line still lands somewhere sane."""
@@ -199,6 +208,17 @@ class Clockwork:
         elif detail != "nothing to commit":
             self.log("commit", ticket=ticket_id, stage="triage", ok=True, sha=detail or None)
 
+    def _commit_milestone(self, map_id: int, note: str) -> None:
+        """Commit the milestone phase's `.scratch` output (round/reviewed labels,
+        review + retrospective comments, any filed follow-up tickets) before the next
+        dispatch — the same clean-tree invariant `_commit_triage` upholds. The review
+        and retrospective touch only the issue tracker, never project code."""
+        ok, detail = self._git_commit_all(f"milestone #{map_id}: {note}")
+        if not ok:
+            self.log("commit", ticket=map_id, stage="milestone", ok=False, error=detail)
+        elif detail != "nothing to commit":
+            self.log("commit", ticket=map_id, stage="milestone", ok=True, sha=detail or None)
+
     def _accept(self, ticket_id: int, issue: dict) -> None:
         for i in range(len(issue.get("acceptance_criteria") or [])):
             issues.check_criterion(ticket_id, i, cwd=self.cwd)
@@ -308,6 +328,119 @@ class Clockwork:
         # so the tree is clean before the next dispatch regardless of the outcome.
         self._commit_triage(ticket_id)
 
+    # -- milestone review + retrospective (a cleared effort's frontier) ----
+    #
+    # The third frontier-refill altitude, above triage. When a `wayfinding` map's
+    # charted frontier has fully cleared, a whole-effort review judges the assembled
+    # work against the map's Destination — the altitude the per-ticket validator
+    # can't reach. With teeth enabled it files thin follow-up tickets for critical
+    # gaps; those re-open the frontier, and the review re-fires when they clear. The
+    # empty (nothing-filed) pass is the fixpoint: it marks the frontier reviewed and
+    # unlocks a one-shot retrospective that proposes canon changes for a human.
+
+    @staticmethod
+    def _all_children_terminal(children: list[dict]) -> bool:
+        return bool(children) and all(
+            c.get("status") in issues.TERMINAL_STATUSES for c in children
+        )
+
+    def _pick_completed_map(self) -> dict | None:
+        """A `wayfinding` map whose charted frontier has fully cleared and whose
+        current size exceeds its last clean review — so a settled map stays quiet
+        while fix tickets or graduated fog reopen it. Only consulted when nothing is
+        ready or awaiting triage, so per-ticket work always wins."""
+        if not self.args.milestone_review:
+            return None
+        for candidate in issues.list_status("wayfinding", cwd=self.cwd):
+            if self.args.feature and candidate.get("feature") != self.args.feature:
+                continue
+            if issues.MILESTONE_BLOCKED_LABEL in (candidate.get("labels") or []):
+                continue
+            kids = issues.children(candidate["id"], cwd=self.cwd)
+            if not self._all_children_terminal(kids):
+                continue
+            if len(kids) <= issues.read_numbered_label(candidate, issues.MILESTONE_REVIEWED_PREFIX):
+                continue
+            return candidate
+        return None
+
+    async def _milestone(self, map_issue: dict) -> None:
+        map_id = map_issue["id"]
+        round_n = issues.read_numbered_label(map_issue, issues.MILESTONE_ROUND_PREFIX)
+
+        # Convergence backstop: if the self-heal loop keeps surfacing gaps, stop and
+        # flag the effort for a human instead of grinding forever — the map-level
+        # analogue of a ticket's attempt cap.
+        if round_n >= self.args.milestone_max_rounds:
+            issues.add_label(map_id, issues.MILESTONE_BLOCKED_LABEL, cwd=self.cwd)
+            issues.comment(
+                map_id,
+                f"milestone review did not converge after {round_n} rounds — this effort "
+                "needs a human look (see the review comments above). Remove the "
+                "`milestone-blocked` label once addressed to re-enable review.",
+                cwd=self.cwd,
+            )
+            self.log("milestone", ticket=map_id, stage="blocked", rounds=round_n)
+            self._commit_milestone(map_id, "review did not converge — flagged for a human")
+            return
+
+        kids = issues.children(map_id, cwd=self.cwd)
+        kids_before = {k["id"] for k in kids}
+        issues.set_numbered_label(map_issue, issues.MILESTONE_ROUND_PREFIX, round_n + 1, cwd=self.cwd)
+        self.log("milestone", ticket=map_id, stage="review", round=round_n + 1)
+
+        prompt = worker.build_milestone_review_prompt(
+            map_issue, kids, self.args.design, self.args.vocab,
+            max_tickets=self.args.milestone_max_tickets,
+            can_file_tickets=self.args.milestone_file_tickets,
+        )
+        await worker.drive(self.command, str(self.cwd), prompt,
+                           label=f"milestone-review #{map_id}")
+
+        new_kids = [k for k in issues.children(map_id, cwd=self.cwd)
+                    if k["id"] not in kids_before]
+        if new_kids:
+            # Not the fixpoint: the review filed fix tickets. They re-open the
+            # frontier; leaving the reviewed marker unset is what lets the review
+            # re-fire once they clear.
+            self.log("milestone", ticket=map_id, stage="filed",
+                     tickets=[k["id"] for k in new_kids])
+            self._commit_milestone(map_id, f"review filed {len(new_kids)} follow-up ticket(s)")
+            return
+
+        # Fixpoint reached — nothing filed. Mark the frontier reviewed at its current
+        # size and reset the round counter (re-read the map so the label edits see the
+        # round bump just written), then retrospect once over the finished effort.
+        fresh = issues.show(map_id, cwd=self.cwd)
+        child_count = len(kids)
+        issues.set_numbered_label(fresh, issues.MILESTONE_REVIEWED_PREFIX, child_count, cwd=self.cwd)
+        issues.clear_numbered_label(fresh, issues.MILESTONE_ROUND_PREFIX, cwd=self.cwd)
+        self.log("milestone", ticket=map_id, stage="clean", children=child_count)
+        await self._retrospect(map_id)
+        self._commit_milestone(map_id, "review clean; retrospective recorded")
+
+    async def _retrospect(self, map_id: int) -> None:
+        map_issue = issues.show(map_id, cwd=self.cwd)
+        children = issues.children(map_id, cwd=self.cwd)
+        excerpt = self._effort_log_excerpt([map_id, *(c["id"] for c in children)])
+        prompt = worker.build_retrospective_prompt(
+            map_issue, children, self.args.design, self.args.vocab, excerpt)
+        await worker.drive(self.command, str(self.cwd), prompt,
+                           label=f"retrospective #{map_id}")
+
+    def _effort_log_excerpt(self, ids: list[int], tail: int = 4000) -> str:
+        """The run-log lines for this effort's tickets — the retrospective's raw
+        signal (dispatch/retry/validate/escalate counts). Best-effort: a missing or
+        unreadable log is not fatal."""
+        try:
+            lines = self.log_path.read_text().splitlines()
+        except OSError:
+            return "(run log unavailable)"
+        wanted = set(ids)
+        kept = [line for line in lines if _log_ticket(line) in wanted]
+        text = "\n".join(kept)
+        return text[-tail:] if text else "(no run-log events recorded for this effort)"
+
     # -- one iteration -----------------------------------------------------
 
     async def _step(self) -> str:
@@ -333,6 +466,17 @@ class Clockwork:
                              title=triage_ticket.get("title"))
                     return "stop:dry-run"
                 await self._triage(triage_id)
+                return "continue"
+            # Nothing ready and nothing to triage — the frontier under some effort may
+            # have fully cleared. Fall through to a whole-effort milestone review.
+            completed_map = self._pick_completed_map()
+            if completed_map is not None:
+                map_id = completed_map["id"]
+                if args.dry_run:
+                    self.log("dry-run", would="milestone", ticket=map_id,
+                             title=completed_map.get("title"))
+                    return "stop:dry-run"
+                await self._milestone(completed_map)
                 return "continue"
             self.log("halt", reason="no-ready")
             return "stop:no-ready"

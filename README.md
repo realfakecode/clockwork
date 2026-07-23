@@ -30,13 +30,15 @@ picks the next action from it:
 | `ready-for-agent` | todo | **worker agent** implements it → `in-progress`, then validation |
 | `in-progress` | active | worker has stopped; the loop validates and moves it to `done`, back to `ready-for-agent` (retry), or `needs-decision` |
 | `needs-decision` | active | nothing automated — waits for a **human design session**, which routes it back to `ready-for-agent` |
-| `wayfinding` | active | not a work ticket — a `wayfinder` map that holds an effort's tickets as children; the loop ignores it |
+| `wayfinding` | active | a `wayfinder` map holding an effort's build tickets as children — never dispatched itself. When its charted frontier fully clears, the loop runs a **milestone review** of the assembled effort against its Destination, then a **retrospective** |
 | `done` / `wontfix` | done | terminal |
 
-Ready work always wins over triage, so the frontier never starves. When the
-`needs-decision` queue fills up, no ready work remains, or a safety cap trips, the
-loop stops and tells you what to do next. See [docs/architecture.md](docs/architecture.md)
-for how validation, escalation, and the run log work.
+Ready work always wins over triage, and triage over milestone review, so the frontier
+never starves: dispatch pulls ready tickets, triage refills them from thin ones, and
+milestone review only fires when a whole effort has cleared. When the `needs-decision`
+queue fills up, no workable ticket remains, or a safety cap trips, the loop stops and
+tells you what to do next. See [docs/architecture.md](docs/architecture.md) for how
+validation, escalation, milestone review, and the run log work.
 
 ## This repository is meta — three kinds of thing live here
 
