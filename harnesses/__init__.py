@@ -1,5 +1,6 @@
 from .pi_rpc import (
     AgentMessageEvent,
+    AgentSettledEvent,
     Event,
     PiRpcClient,
     ReasoningEvent,
@@ -15,6 +16,7 @@ from .pi_rpc import (
 
 __all__ = [
     "AgentMessageEvent",
+    "AgentSettledEvent",
     "Event",
     "PiRpcClient",
     "ReasoningEvent",

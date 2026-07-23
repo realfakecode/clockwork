@@ -7,6 +7,7 @@ import difflib
 
 from harnesses import (
     AgentMessageEvent,
+    AgentSettledEvent,
     Event,
     ReasoningEvent,
     SessionStartEvent,
@@ -42,6 +43,17 @@ def trunc(text: str, width: int = WIDTH) -> str:
     return text[:width - 1] + "…"
 
 
+def as_text(value: object) -> str:
+    """Coerce an arbitrary tool-argument value to a display string. Tool args
+    are untrusted, possibly-partial protocol data: a field can be missing, null,
+    or the wrong type. Render-only code must never raise over that (a malformed
+    tool call must not take down an unattended run), so `None`/non-strings
+    collapse to a safe string rather than blowing up `.replace`/`.splitlines`."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
 class EventFormatter:
     def __init__(self, label: str | None = None):
         # `label` names the dispatch (e.g. "worker #12"); when set, the repeated
@@ -66,12 +78,14 @@ class EventFormatter:
 
     def _diff(self, args: dict) -> None:
         "Render an edit call as a unified diff of its old→new blocks."
-        path = args.get("path", "")
-        print(f"{MAGENTA}✎{RESET} {BOLD}edit{RESET} {DIM}{path}{RESET}", flush=True)
+        print(f"{MAGENTA}✎{RESET} {BOLD}edit{RESET} {DIM}{as_text(args.get('path'))}{RESET}", flush=True)
         rendered: list[str] = []
-        for edit in args.get("edits", []):
-            old = edit.get("oldText", "").splitlines()
-            new = edit.get("newText", "").splitlines()
+        edits = args.get("edits")
+        for edit in edits if isinstance(edits, list) else []:
+            if not isinstance(edit, dict):
+                continue
+            old = as_text(edit.get("oldText")).splitlines()
+            new = as_text(edit.get("newText")).splitlines()
             for line in difflib.unified_diff(old, new, lineterm="", n=1):
                 if line.startswith(("---", "+++")):
                     continue
@@ -92,10 +106,10 @@ class EventFormatter:
 
     def finish_tool_use(self, event: ToolResultEvent) -> None:
         use = self.tool_uses.pop(event.call_id, None)
-        args = use.arguments if use else {}
+        args = use.arguments if use and isinstance(use.arguments, dict) else {}
 
         if event.name == "bash":
-            cmd = trunc(args.get("command", "").replace("\n", " "))
+            cmd = trunc(as_text(args.get("command")).replace("\n", " "))
             print(f"{GREEN}${RESET} {BOLD}{cmd}{RESET}", flush=True)
             self._body(event.output, SHELL_LINES, event.is_error)
             return
@@ -105,7 +119,7 @@ class EventFormatter:
             return
 
         print(
-            f"{CYAN}◇{RESET} {BOLD}{event.name}{RESET} {DIM}{args.get('path', '')}{RESET}",
+            f"{CYAN}◇{RESET} {BOLD}{event.name}{RESET} {DIM}{as_text(args.get('path'))}{RESET}",
             flush=True,
         )
         self._body(event.output, READ_LINES, event.is_error)
@@ -129,7 +143,7 @@ class EventFormatter:
         if self.thinking:
             self._end_thinking()
 
-        if isinstance(event, (SessionStartEvent, TurnStartEvent, TurnEndEvent)):
+        if isinstance(event, (SessionStartEvent, TurnStartEvent, TurnEndEvent, AgentSettledEvent)):
             return
 
         if isinstance(event, UserMessageEvent):

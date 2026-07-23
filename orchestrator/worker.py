@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from harnesses import (
     AgentMessageEvent,
+    AgentSettledEvent,
     PiRpcClient,
     SessionEndEvent,
     TurnEndEvent,
@@ -326,8 +327,13 @@ async def drive(command: list[str], cwd: str, prompt: str, label: str | None = N
             formatter.print(event)
             if isinstance(event, AgentMessageEvent):
                 parts.append(event.text)
-            if isinstance(event, TurnEndEvent) and event.stop_reason == "stop":
+            # `agent_settled` is the authoritative end of a prompt: the agent
+            # has stopped with no retry, compaction, or queued continuation left.
+            # A per-turn `stop` is only a fallback for a pi build that doesn't
+            # emit settle -- on its own it would hang on a final turn that ends
+            # `length`/`error`/`aborted`, or miss a retry/compaction tail.
+            if isinstance(event, (AgentSettledEvent, SessionEndEvent)):
                 break
-            if isinstance(event, SessionEndEvent):
+            if isinstance(event, TurnEndEvent) and event.stop_reason == "stop":
                 break
     return "".join(parts)

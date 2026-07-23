@@ -1,8 +1,10 @@
 """Async client for the `pi --mode rpc` JSONL protocol (see docs/rpc.md).
 
 Covers a working subset of the protocol: sending/steering messages, model and
-thinking-level control, abort, get_state, and bash. Extension UI requests
-(select/confirm/input/editor/notify/etc.) are not supported.
+thinking-level control, abort, get_state, and bash. Extension UI dialog
+requests (select/confirm/input/editor) can't be shown headless, so they are
+auto-dismissed (cancelled) to keep the agent from blocking on stdin waiting for
+a reply; the fire-and-forget UI requests (notify/setStatus/...) are ignored.
 
 Output events are translated into a small set of harness-agnostic dataclasses
 (reasoning, tool use/result, user/agent message, turn and session
@@ -21,12 +23,25 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 
-# Buffer limit for the subprocess stdout StreamReader. asyncio defaults to
-# 64 KiB, but a single pi JSON-RPC line can carry a large tool result, file
-# read, or agent message; when one exceeds the limit `readline()` raises
-# `ValueError: Separator is found, but chunk is longer than limit` and the
-# reader dies mid-run. 64 MiB is well clear of any realistic line.
+# High-water mark for the subprocess stdout StreamReader's internal buffer
+# (asyncio's default is 64 KiB). The read loop pulls fixed-size chunks and
+# frames lines itself, so this bound never caps a single line's length -- it
+# only governs how much unread data asyncio buffers before pausing the
+# transport for backpressure. A single pi event can be large: a big tool
+# result or file read, or a long agent/thinking message, which the protocol
+# re-echoes in full on every streaming delta. Keep it generous.
 _STDOUT_LIMIT = 64 * 1024 * 1024
+
+# Size of each stdout read. Lines are reassembled from these chunks by
+# splitting on LF, so no line-length ceiling applies -- unlike
+# `StreamReader.readline()`, which raises `ValueError` once a line grows past
+# the buffer limit and takes the reader down with it.
+_READ_CHUNK = 64 * 1024
+
+# Extension UI methods that block pi on stdin until they get an
+# `extension_ui_response`. The fire-and-forget ones (notify/setStatus/...) do
+# not block and need no reply.
+_UI_DIALOG_METHODS = frozenset({"select", "confirm", "input", "editor"})
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +80,15 @@ class TurnEndEvent(Event):
     """A turn has completed."""
 
     stop_reason: str | None = None
+
+
+@dataclass
+class AgentSettledEvent(Event):
+    """The agent run has fully settled: no automatic retry, compaction retry, or
+    queued continuation remains. This is the authoritative "the prompt is done,
+    pi is now waiting for the next command" signal. A per-turn `TurnEndEvent` is
+    not -- a turn can end mid-run, and even the final one may carry a stop reason
+    of `length`/`error`/`aborted` rather than `stop`."""
 
 
 @dataclass
@@ -120,6 +144,9 @@ def _translate(payload: dict[str, Any]) -> list[Event]:
         message = payload.get("message") or {}
         return [TurnEndEvent(stop_reason=message.get("stopReason"))]
 
+    if kind == "agent_settled":
+        return [AgentSettledEvent()]
+
     if kind == "message_update":
         delta = payload.get("assistantMessageEvent") or {}
         delta_kind = delta.get("type")
@@ -144,9 +171,11 @@ def _translate(payload: dict[str, Any]) -> list[Event]:
 
     if kind == "tool_execution_end":
         result = payload.get("result") or {}
-        content = result.get("content") or []
+        content = result.get("content")
         text = "".join(
-            block.get("text", "") for block in content if block.get("type") == "text"
+            block.get("text", "")
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict) and block.get("type") == "text"
         )
         return [
             ToolResultEvent(
@@ -157,8 +186,9 @@ def _translate(payload: dict[str, Any]) -> list[Event]:
             )
         ]
 
-    # agent_start/agent_end/agent_settled, queue_update, compaction_*,
-    # auto_retry_*, extension_error, extension_ui_request, etc. are ignored.
+    # agent_start/agent_end, queue_update, compaction_*, auto_retry_*,
+    # extension_error, etc. are ignored. extension_ui_request is handled in the
+    # read loop (dialogs auto-dismissed), not here.
     return []
 
 
@@ -316,30 +346,76 @@ class PiRpcClient:
         await self._process.stdin.drain()
         return await future
 
+    async def _maybe_dismiss_dialog(self, payload: dict[str, Any]) -> None:
+        """Answer a blocking extension UI dialog so pi doesn't wedge on stdin.
+
+        Headless there is no UI to present, so a dialog is auto-dismissed
+        (cancelled): pi unblocks and the extension proceeds with its
+        no-selection default -- select/input/editor see `undefined`, confirm
+        sees `false` -- exactly as it would when a dialog `timeout` elapses.
+        Fire-and-forget requests (notify/setStatus/...) don't block and are left
+        alone."""
+        if payload.get("method") not in _UI_DIALOG_METHODS:
+            return
+        request_id = payload.get("id")
+        if request_id is None or self._process is None or self._process.stdin is None:
+            return
+        response = {"type": "extension_ui_response", "id": request_id, "cancelled": True}
+        self._process.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
+        try:
+            await self._process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    async def _handle_line(self, raw: bytes) -> None:
+        """Decode, parse, and route one JSONL record. A malformed or empty line
+        is skipped. An extension UI request is answered here (a blocking dialog
+        would wedge pi on stdin forever); everything else goes to `_dispatch`."""
+        line = raw.decode("utf-8", errors="replace").rstrip("\r")
+        if not line:
+            return
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if payload.get("type") == "extension_ui_request":
+            await self._maybe_dismiss_dialog(payload)
+            return
+        self._dispatch(payload)
+
     async def _read_loop(self) -> None:
         assert self._process is not None and self._process.stdout is not None
+        stream = self._process.stdout
+        buffer = bytearray()
         error: str | None = None
         try:
             while True:
                 try:
-                    raw_line = await self._process.stdout.readline()
+                    chunk = await stream.read(_READ_CHUNK)
                 except asyncio.CancelledError:
-                    # close() cancels us to force an exit -- readline() gives
-                    # no other guaranteed way to unblock once the process is
-                    # dead. Stop reading; fall through to the finally below to
-                    # still deliver a SessionEndEvent.
+                    # close() cancels us to force an exit -- read() gives no
+                    # other guaranteed way to unblock once the process is dead.
+                    # Stop reading; fall through to the finally below to still
+                    # deliver a SessionEndEvent.
                     break
-                if not raw_line:
+                if not chunk:
+                    # EOF. Flush any unterminated trailing line before stopping;
+                    # pi terminates records with LF, but the reference client
+                    # processes a trailing partial too, so match it.
+                    if buffer:
+                        await self._handle_line(bytes(buffer))
                     break
-                line = raw_line.decode("utf-8", errors="replace")
-                line = line.rstrip("\r\n")
-                if not line:
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                self._dispatch(payload)
+                buffer.extend(chunk)
+                # Strict JSONL framing: records are delimited by LF only. Frame
+                # lines here rather than via StreamReader.readline() so a single
+                # oversized event can't raise and take the reader down.
+                while True:
+                    newline = buffer.find(b"\n")
+                    if newline < 0:
+                        break
+                    raw = bytes(buffer[:newline])
+                    del buffer[: newline + 1]
+                    await self._handle_line(raw)
         except Exception as exc:
             # Record the reason so it rides out on SessionEndEvent below, then
             # re-raise so close() surfaces it too -- loud on the live event
