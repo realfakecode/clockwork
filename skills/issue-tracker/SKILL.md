@@ -52,9 +52,14 @@ non-empty **acceptance-criteria** checklist.
 ```
 .scratch/
   <feature>/
-    issues/<id>-<slug>.md            # active issues
-    archive/<id>-<slug>.md           # archived (still resolve dependencies)
+    issues/<id>-<slug>.md            # active issues, grouped by feature
+  archive/<id>-<slug>.md             # archived issues, all features together
 ```
+
+`archive/` is a single top-level directory, not per-feature — ids are global and
+monotonic, so archived filenames never collide even though every feature's archived
+issues land in the same place. An issue's feature is a frontmatter field (`feature:`),
+not something inferred from its path, so it survives the move to `archive/`.
 
 Never hand-edit frontmatter or filenames — every field has a command that writes it
 correctly. Editing body prose outside the frontmatter (the title/question/spec text and

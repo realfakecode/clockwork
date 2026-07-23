@@ -36,13 +36,13 @@ def lint(root: Path, fix: bool = False) -> list[LintFinding]:
     findings: list[LintFinding] = []
     config = config_mod.load_config(root)
 
-    parsed: list[tuple[Path, str, bool, model.Issue | None, Exception | None]] = []
-    for path, feature, archived in store_mod.iter_issue_files(root):
+    parsed: list[tuple[Path, str | None, bool, model.Issue | None, Exception | None]] = []
+    for path, dir_feature, archived in store_mod.iter_issue_files(root):
         try:
             issue = model.parse_issue(path)
-            parsed.append((path, feature, archived, issue, None))
+            parsed.append((path, dir_feature, archived, issue, None))
         except model.ParseError as exc:
-            parsed.append((path, feature, archived, None, exc))
+            parsed.append((path, dir_feature, archived, None, exc))
             findings.append(LintFinding(path, None, "parse", str(exc)))
 
     valid = [(p, f, a, i) for (p, f, a, i, e) in parsed if i is not None]
@@ -63,7 +63,7 @@ def lint(root: Path, fix: bool = False) -> list[LintFinding]:
 
     all_ids = set(by_id.keys())
 
-    for path, _feature, _archived, issue in valid:
+    for path, dir_feature, _archived, issue in valid:
         # body present + H1 title
         if not issue.body.strip():
             findings.append(LintFinding(path, issue.id, "empty-body", "issue body is empty"))
@@ -77,6 +77,16 @@ def lint(root: Path, fix: bool = False) -> list[LintFinding]:
                 LintFinding(
                     path, issue.id, "filename-mismatch",
                     f"filename '{path.name}' does not match '{expected_name}'",
+                )
+            )
+
+        # an active issue's directory must agree with its frontmatter feature;
+        # archived issues have no per-feature directory to check against
+        if dir_feature is not None and dir_feature != issue.feature:
+            findings.append(
+                LintFinding(
+                    path, issue.id, "feature-mismatch",
+                    f"stored under feature '{dir_feature}' but frontmatter feature is '{issue.feature}'",
                 )
             )
 

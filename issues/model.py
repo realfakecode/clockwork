@@ -16,6 +16,7 @@ FRONTMATTER_DELIM = "---"
 FIELD_ORDER = [
     "id",
     "slug",
+    "feature",
     "title",
     "status",
     "category",
@@ -66,6 +67,7 @@ def _to_datetime(value) -> datetime:
 class Issue:
     id: int
     slug: str
+    feature: str
     status: str
     created: datetime
     title: str = ""
@@ -87,6 +89,7 @@ class Issue:
         data = {
             "id": self.id,
             "slug": self.slug,
+            "feature": self.feature,
             "title": self.title,
             "status": self.status,
             "category": self.category,
@@ -142,7 +145,9 @@ def coerce_criteria(value) -> list[dict]:
 
 
 def issue_from_dict(data: dict, body: str) -> Issue:
-    missing = [k for k in ("id", "slug", "status", "created") if k not in data or data[k] is None]
+    missing = [
+        k for k in ("id", "slug", "feature", "status", "created") if k not in data or data[k] is None
+    ]
     if missing:
         raise ParseError(f"missing required field(s): {', '.join(missing)}")
     try:
@@ -156,6 +161,7 @@ def issue_from_dict(data: dict, body: str) -> Issue:
     return Issue(
         id=issue_id,
         slug=str(data["slug"]),
+        feature=str(data["feature"]),
         title=str(data.get("title") or ""),
         status=str(data["status"]),
         category=data.get("category"),
