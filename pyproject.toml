@@ -7,9 +7,19 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+# Tests import the packages in-tree without an editable install.
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [project.scripts]
 # One `uv tool install .` ships both entry points.

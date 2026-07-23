@@ -64,6 +64,11 @@ def show(issue_id: int, cwd: str | Path | None = None) -> dict:
     return _run_json(["show", str(issue_id)], cwd=cwd)
 
 
+def children(issue_id: int, cwd: str | Path | None = None) -> list[dict]:
+    """Direct children (issues whose `parent` is `issue_id`), id-sorted."""
+    return _run_json(["children", str(issue_id)], cwd=cwd)
+
+
 # -- writes ----------------------------------------------------------------
 
 
@@ -136,3 +141,51 @@ def bump_attempts(issue_id: int, current: int, cwd: str | Path | None = None) ->
     remove = [f"{ATTEMPTS_PREFIX}{current}"] if current > 0 else None
     edit_labels(issue_id, cwd, remove=remove, add=[f"{ATTEMPTS_PREFIX}{new}"])
     return new
+
+
+# -- milestone-review label helpers ---------------------------------------
+#
+# A wayfinding map carries two counters and one flag, all as labels so tracker
+# state stays the single source of truth (same reason `attempts:N` lives here):
+#   milestone-round:N     — review rounds fired since the last clean pass; the
+#                           convergence backstop reads it.
+#   milestone-reviewed:N  — child count at the last CLEAN review. The frontier
+#                           re-fires only once it grows past this, so a clean map
+#                           stays quiet while fix tickets or graduated fog reopen it.
+#   milestone-blocked     — set when a map exhausts its rounds without converging,
+#                           so the loop stops re-reviewing it and a human steps in.
+
+TERMINAL_STATUSES = ("done", "wontfix")
+MILESTONE_ROUND_PREFIX = "milestone-round:"
+MILESTONE_REVIEWED_PREFIX = "milestone-reviewed:"
+MILESTONE_BLOCKED_LABEL = "milestone-blocked"
+
+
+def read_numbered_label(issue: dict, prefix: str) -> int:
+    """Value of a `prefix<N>` label on the issue (0 if absent or unparseable)."""
+    for label in issue.get("labels") or []:
+        if label.startswith(prefix):
+            try:
+                return int(label[len(prefix):])
+            except ValueError:
+                continue
+    return 0
+
+
+def set_numbered_label(issue: dict, prefix: str, value: int, cwd: str | Path | None = None) -> None:
+    """Replace every `prefix<n>` label on the issue with a single `prefix<value>`.
+    `issue` supplies the labels to strip, so pass a freshly-read dict — a stale
+    snapshot would leave an orphaned counter behind."""
+    remove = [label for label in (issue.get("labels") or []) if label.startswith(prefix)]
+    edit_labels(issue["id"], cwd, remove=remove or None, add=[f"{prefix}{value}"])
+
+
+def clear_numbered_label(issue: dict, prefix: str, cwd: str | Path | None = None) -> None:
+    """Drop every `prefix<n>` label from the issue (no-op when none are present)."""
+    remove = [label for label in (issue.get("labels") or []) if label.startswith(prefix)]
+    if remove:
+        edit_labels(issue["id"], cwd, remove=remove)
+
+
+def add_label(issue_id: int, label: str, cwd: str | Path | None = None) -> None:
+    edit_labels(issue_id, cwd, add=[label])

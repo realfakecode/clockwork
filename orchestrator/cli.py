@@ -36,6 +36,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stop when the needs-decision queue reaches this size (default: 5)")
     parser.add_argument("--max-dispatches", type=int, default=20,
                         help="safety cap on iterations per run (default: 20)")
+    parser.add_argument("--milestone-review", action=argparse.BooleanOptionalAction, default=True,
+                        help="when a wayfinding map's charted frontier fully clears, review the "
+                        "assembled effort against its Destination and retrospect over the run "
+                        "(default: on; --no-milestone-review disables both)")
+    parser.add_argument("--milestone-file-tickets", action="store_true",
+                        help="let the milestone review FILE follow-up tickets for critical gaps — "
+                        "the self-healing loop. Off by default: the review only reports its "
+                        "findings, and no agent creates tickets unattended.")
+    parser.add_argument("--milestone-max-rounds", type=int, default=3,
+                        help="give up self-healing a map after this many review rounds still find "
+                        "gaps, and flag it for a human (default: 3)")
+    parser.add_argument("--milestone-max-tickets", type=int, default=3,
+                        help="most follow-up tickets one milestone review may file in a single "
+                        "pass (default: 3)")
     parser.add_argument("--model",
                         help="model id passed to `pi --model` (e.g. provider/model)")
     parser.add_argument("--once", action="store_true",

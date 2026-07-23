@@ -36,6 +36,15 @@ def render_criteria(criteria: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def render_children(children: list[dict]) -> str:
+    if not children:
+        return "(no child tickets)"
+    return "\n".join(
+        f"- #{c['id']} [{c.get('status', '?')}] {c.get('title', '')}".rstrip()
+        for c in children
+    )
+
+
 def build_worker_prompt(issue: dict, design_path: str, vocab_path: str) -> str:
     """Per-ticket worker prompt from `issues show <id> --json`."""
     ticket_id = issue["id"]
@@ -283,6 +292,173 @@ End your reply with EXACTLY one line, nothing after it — exactly one of:
   {VERDICT_PASS}
   {VERDICT_FAIL} — <one-sentence reason>
   {VERDICT_ESCALATE} — <the decision the worker defaulted, and the choice it made>
+"""
+
+
+def build_milestone_review_prompt(
+    map_issue: dict,
+    children: list[dict],
+    design_path: str,
+    vocab_path: str,
+    *,
+    max_tickets: int,
+    can_file_tickets: bool,
+) -> str:
+    """Whole-effort review, one altitude above the per-ticket validator: does the
+    assembled work actually reach the map's Destination, as a coherent whole? It
+    fires when a wayfinding map's charted frontier has fully cleared. With
+    `can_file_tickets`, its teeth are to file thin `needs-triage` follow-ups for
+    CRITICAL gaps (the self-healing loop) — filing nothing is the fixpoint that
+    unlocks the retrospective; otherwise it only reports. Read-only on code either
+    way."""
+    map_id = map_issue["id"]
+    feature = map_issue.get("feature", "")
+    title = map_issue.get("title", "")
+    body = (map_issue.get("body") or "").strip()
+    kids = render_children(children)
+
+    if can_file_tickets:
+        teeth = f"""\
+# Your teeth: file follow-ups for CRITICAL gaps only
+
+For each CRITICAL finding — up to {max_tickets} this pass — file a thin follow-up as a
+child of this map, for the loop to specify and build:
+
+    issues new {feature} "<slice title>" --parent {map_id} --status needs-triage --body "<one line: the gap and where it is>"
+
+- Keep it thin (title + one-line body); the loop's triage agent fills it in.
+- Wire a blocking edge (`issues block <new-id> --on <other-id>`) if one fix must
+  precede another.
+- If MORE than {max_tickets} critical gaps exist, file only the {max_tickets} most
+  critical and add an `issues comment {map_id}` noting more remain — the next round
+  catches them once these land. Do not file a pile.
+- If NOTHING is critical, file NOTHING and add a one-line `issues comment {map_id}`
+  confirming the effort meets its Destination. Filing nothing is the signal the
+  effort is done: it unlocks the retrospective and lets the effort close.
+
+You may create tickets and comment, but you may NOT modify project code or any
+existing ticket's spec."""
+    else:
+        teeth = f"""\
+# Report only — ticket-filing is disabled
+
+Do not create or modify any ticket, and do not touch project code. Post your findings
+as a SINGLE `issues comment {map_id}`: one line per critical gap, or a one-line "meets
+its Destination" if the effort is clean. A human takes it from there."""
+
+    return f"""\
+You are a STRICT, independent reviewer judging a whole effort at once — one altitude
+above the per-ticket validator, which only ever saw a single ticket. Every build
+ticket under this map has passed its own validation and landed. Your question is the
+one no per-ticket check could ask: **does the assembled work actually reach this
+map's Destination, as a coherent whole?**
+
+You are READ-ONLY on code: inspect the working tree (`git log`, `git diff`, read
+files, run read-only checks) and read tickets with read-only `issues` commands.
+
+# The map — #{map_id}: {title}
+
+{body}
+
+## Build tickets under this map (all terminal)
+{kids}
+
+## Normative design doc
+`{design_path}` — the assembled work must not contradict any `D-N`, nor stretch one
+past the scope its **Why:** bounds.
+
+## Naming registry
+`{vocab_path}` — the canonical name per concept; use it to catch one concept built
+twice under two names across different tickets.
+
+# What counts as CRITICAL — the bar is narrow
+
+A finding is CRITICAL only if it means the effort does not actually reach its
+Destination:
+
+1. UNMET DESTINATION — a clause of the Destination is not delivered by the assembled
+   work.
+2. BROKEN SEAM — slices that each passed alone but do not compose: a broken
+   end-to-end path, or mismatched interfaces between two tickets.
+3. CONTRADICTS CANON — the assembled whole contradicts a `D-N` decision.
+4. DEAD SCAFFOLDING — intermediate scaffolding a later slice was meant to remove and
+   didn't.
+
+NOT critical — do NOT raise: improvements, polish, refactors, "would be nicer", or new
+scope. Unbuilt-but-desirable work is FOG for the next wayfinder pass, not a milestone
+finding. When in doubt, it is not critical.
+
+{teeth}
+
+Begin now.
+"""
+
+
+def build_retrospective_prompt(
+    map_issue: dict,
+    children: list[dict],
+    design_path: str,
+    vocab_path: str,
+    log_excerpt: str,
+) -> str:
+    """Read-only retrospective over ONE finished, clean-reviewed effort. Not a code
+    review — the milestone review already passed — it mines how the effort *ran* for
+    lessons its canon should absorb, and proposes them for a human to ratify. Its only
+    write is a single summary comment on the map; advisory by design."""
+    map_id = map_issue["id"]
+    title = map_issue.get("title", "")
+    body = (map_issue.get("body") or "").strip()
+    kids = render_children(children)
+
+    return f"""\
+You are running a retrospective over one finished effort. Its whole-effort review is
+clean, so the code is not in question here. Your job is to mine how the effort *ran*
+for lessons its canon should absorb — so the next effort starts from a richer design
+doc and naming registry instead of relearning the same things.
+
+You are READ-ONLY: read files and use read-only `issues` commands. Your ONLY write is
+the one summary comment below. Do not edit canon, and do not file or change tickets.
+
+# The map — #{map_id}: {title}
+
+{body}
+
+## Build tickets under this map
+{kids}
+
+Read the tickets that struggled (`issues show <id>`) for their retry notes,
+`assumption:` comments, and any `QUESTION:` escalations — that is where the friction
+left a trace.
+
+## Run-log excerpt for this effort
+Each line is one dispatch/triage/validate/retry/escalate/commit event. Repetition and
+counts here are the signal.
+
+{log_excerpt}
+
+# What to look for — systemic, not one-off
+
+1. ESCALATION CLUSTER — several tickets that escalated on the same underlying axis:
+   one `D-N`-shaped hole, not three separate questions.
+2. REPEATED ASSUMPTION — the same concept defaulted via `assumption:` across tickets:
+   a missing naming-registry entry, or a missing `D-N`.
+3. ATTEMPT HOT-SPOT — tickets that took several attempts: where the spec or canon was
+   too thin for a worker to land it first try.
+4. RECURRING VALIDATOR ESCALATE — a silent-default the validator kept catching: a gap
+   the worker prompt or the design doc should close at the source.
+
+# Output — ONE comment, advisory
+
+Post a single `issues comment {map_id}` with a short report. Propose, do not enact:
+
+- **Canon (`D-N`) proposals** — each a one-line decision plus its **Why:**, for a
+  human design session to ratify into `{design_path}`.
+- **Registry proposals** — canonical terms worth adding to `{vocab_path}`.
+- **Systemic gaps** — anything else worth a human's eye before the next effort.
+
+Not every effort teaches something. If the run was clean — few retries, no escalation
+cluster, no repeated assumption — say exactly that in one line. Do NOT invent findings
+to fill the report. Then STOP.
 """
 
 
