@@ -8,8 +8,7 @@ whose *definition* was actually argued out is a weighed decision and belongs in
 Read it through by concept before naming something new — searching only turns up the
 term you already have in mind, which is the one you're likely to get wrong, so each
 entry leads with a `Not:` list of the synonyms it displaces. Triage is its only
-writer; workers and the validator read it. How to use and extend it is the
-`domain-modeling` skill's job.
+writer; workers and the validator read it.
 
 ## Format
 

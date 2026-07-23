@@ -1,6 +1,6 @@
 ---
 name: design-session
-description: Batched human design phase for when the `needs-decision` escalation queue is non-empty
+description: Guided Q&A to drain the `needs-decision` escalation queue, unblocking its tickets
 disable-model-invocation: true
 ---
 
@@ -8,13 +8,14 @@ disable-model-invocation: true
 
 The execution phase is a dumb loop: `clockwork` dispatches `ready-for-agent` tickets to
 a headless worker until design questions pile up in the `needs-decision` queue, then it
-halts. This skill is the **matched human phase** — a batched design session that drains
-that queue. Do the whole pile at once; answering escalations one at a time as they trickle
-in puts you back on the critical path of every ticket, which defeats the point.
+halts. This skill is the **matched human phase** — a guided Q&A that drains that queue.
+Work the whole pile in one sitting; answering escalations one at a time as they trickle in
+puts you back on the critical path of every ticket, which defeats the point.
 
-This is a **compiler**, not a chat: its output is a *patch* to canon plus ticket state
-changes. An answer given only in conversation is the rot vector — agents keep reading stale
-design. Don't let an answer *be* the resolution; the resolution is the emitted patch.
+The session is a grilling interview, not a chat. Its output is a *patch* to canon plus
+ticket state changes. An answer given only in conversation is the rot vector — agents keep
+reading stale design. Don't let an answer *be* the resolution; the resolution is the
+emitted patch, made as each question lands so the queue ends empty and unblocked.
 
 ## Entry
 
@@ -39,72 +40,50 @@ Also read the canonical design doc (default `docs/design.md`) so you resolve aga
 existing decisions, not from scratch. It is **normative** — decisions and constraints only,
 each addressable as `D-N`.
 
-## Resolve — present the whole pile at once
+## Resolve — a grounded grilling, one question at a time
 
-Present every queued question to the user **together**, each with the worker's proposed
-default and your recommendation. Batching is the point; do not drip them out.
+Run the queue as a **grilling** session: put the open questions to the user one at a time,
+waiting for each answer before moving on, and walk down dependencies between decisions in
+order. For each question, look up any *fact* the environment can answer (filesystem, the
+tickets, the design doc) rather than asking, and offer a recommendation — usually the
+worker's proposed default, which exists to keep the session short. The *decision* is the
+user's; put it to them and wait.
 
-- Use **grilling** to stress-test a decision the user is unsure about — walk the branches
-  one at a time until the decision is sharp.
-- Use **domain-modeling** when a question is really a terminology or boundary dispute —
-  pin the term before deciding the behaviour.
-- Prefer the worker's proposed default unless there's a reason to override; the defaults
-  exist to keep this session short.
+Reach for **domain-modeling** when a question is really a terminology or boundary dispute —
+pin the term before deciding the behaviour, and let it place the result in the right home
+(canon vs. the naming registry).
 
-## Emit — the resolution is a patch (per decision)
+## Emit — resolve each decision as it lands
 
-For **each** resolved question, do both halves. Neither is optional.
+The moment a question is settled, do both halves before moving to the next. Neither is
+optional; leaving them for the end is the step you skip when tired.
 
-1. **Patch canon.** Append a new addressable decision to the design doc — normative,
-   no code description. State the constraint, and record the **rationale that pins
-   its scope**: *why* this, so the terse constraint can't later be over-extended to
-   mean something adjacent but unintended. Size the rationale to the decision's
-   weight — a genuinely one-line constraint gets a one-line why; a contested choice
-   carries the alternative it beat. Record the reason itself, never a meta-tag
-   *about* the decision (status, confidence, "how firmly held"): presence in canon
-   already means it was weighed, so a confidence field is redundant and only invites
-   hedging and relitigation.
+1. **Patch canon.** Append the decision to the design doc as an addressable `D-N` entry —
+   normative constraint plus the `Why:` that pins its scope. `domain-modeling` owns the
+   format and the admission test (canon holds only weighed decisions; bare conventions go
+   to the naming registry or code). Reuse the existing numbering; edit an entry in place
+   when a new decision changes it, never renumber.
 
-   ```markdown
-   ## D-<N>: <title>
-
-   <the constraint the implementation must satisfy>
-
-   **Why:** <the reason, which bounds what the constraint claims — plus the rejected
-   alternative if the choice was contested>
-   ```
-
-   Admission test: an entry must be able to answer *"what did we weigh?"* If it
-   can't, it's a convention wearing a decision's clothes — it belongs in code or
-   `CLAUDE.md`, not canon (uncanonized, it stays cheaply overturnable). Reuse the
-   existing `D-N` numbering; never renumber old entries (tickets cite them by
-   number). When a new decision changes an old one, edit that entry in place — the
-   number is the stable address, its content can move.
-
-2. **Update the ticket.** Inline the decision **as derived, with a citation** — this is
-   deliberate denormalization: the worker reads tickets, not diffs, and a citation makes
-   staleness detectable and gives a precedence rule when copy and canon disagree.
+2. **Update the ticket.** Inline the decision as derived, with a citation — the worker
+   reads tickets, not diffs, and the citation makes staleness detectable and sets
+   precedence when copy and canon disagree.
 
    ```bash
    issues comment <id> --body "DECIDED (per D-<N>): <the derived instruction for this ticket>"
    issues status <id> ready-for-agent
    ```
 
-   A `needs-decision → ready-for-agent` move is a legal transition. Category and
-   acceptance criteria are already set from when the ticket was first routed, so the move
-   passes the issue tracker's invariants. If a decision means a question is out of scope, route
-   it to `wontfix` (or `ready-for-human`) instead, with the same citation.
+   `needs-decision → ready-for-agent` is a legal transition; category and acceptance
+   criteria were set when the ticket was first routed, so the move passes the tracker's
+   invariants. If the decision puts the question out of scope, route to `wontfix` (or
+   `ready-for-human`) instead, with the same citation. If it changes what "done" means,
+   update the acceptance criteria too (`issues criteria <id> --add/--remove ...`) so
+   clockwork validates the right thing on the next attempt.
 
-   If a decision changes what "done" means, update the acceptance criteria too
-   (`issues criteria <id> --add/--remove ...`) so clockwork's validation step checks the
-   right thing on the next attempt.
-
-## Exit criterion (not just entry)
+## Exit criterion
 
 Done means **both**: the `needs-decision` queue is empty **and** every decision is written
-into the design doc as a `D-N` entry with the tickets citing it. Emitting the patch + ticket
-updates *is* the done state. Formalization is the step you skip when tired — that's exactly
-the rot clockwork exists to prevent, so don't stop until canon is patched. Verify:
+into the design doc as a `D-N` entry with the tickets citing it. Verify:
 
 ```bash
 issues list --status needs-decision    # must be empty
