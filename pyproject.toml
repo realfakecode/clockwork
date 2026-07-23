@@ -1,0 +1,20 @@
+[project]
+name = "clockwork"
+version = "0.1.0"
+description = "Unattended ticket loop driving a headless agent + issue tracker CLI"
+requires-python = ">=3.13"
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+# One `uv tool install .` ships both entry points.
+harness = "orchestrator.cli:main"
+tracker = "issue_tracker.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["harnesses", "issue_tracker", "orchestrator"]
