@@ -259,10 +259,15 @@ def remove_criterion(criteria: list[dict], index: int) -> None:
     del criteria[index]
 
 
-def render_criteria(criteria: list[dict]) -> str:
-    """Human-readable checklist, one `N. [ ] text` line per criterion."""
+def render_criteria(criteria: list[dict], indices: list[int] | None = None) -> str:
+    """Human-readable checklist, one `N. [ ] text` line per criterion.
+
+    `indices`, if given, supplies the displayed number for each item — e.g. to
+    print a subset of a larger list under its real position — instead of the
+    default 0-based enumeration.
+    """
     lines = []
-    for i, item in enumerate(criteria):
+    for i, item in zip(indices if indices is not None else range(len(criteria)), criteria):
         box = "x" if item.get("done") else " "
         lines.append(f"{i}. [{box}] {item['text']}")
     return "\n".join(lines)

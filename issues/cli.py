@@ -494,9 +494,11 @@ def cmd_criteria(args: argparse.Namespace) -> int:
     record = store_mod.get_issue(root, args.id)
     criteria = record.issue.acceptance_criteria
     changed = False
+    added: list[dict] = []
 
     for text in args.add or []:
         model.add_criterion(criteria, text)
+        added.append(criteria[-1])
         changed = True
     for index in args.check or []:
         model.set_criterion_done(criteria, index, True)
@@ -514,6 +516,13 @@ def cmd_criteria(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(criteria, indent=2))
+    elif added:
+        # Print only what THIS call added (at its real position in the full
+        # list), not the whole checklist — so one call with several --add
+        # flags and several separate --add calls read the same in a
+        # transcript, instead of each call re-echoing everything added so far.
+        indices = [i for i, item in enumerate(criteria) if any(item is a for a in added)]
+        print(model.render_criteria([criteria[i] for i in indices], indices))
     elif criteria:
         print(model.render_criteria(criteria))
     else:
