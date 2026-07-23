@@ -5,6 +5,7 @@
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 
+git init .
 tracker init
 
 # 1 — lexer (the head of the chain; nothing blocks it)

@@ -29,17 +29,15 @@ guess" (a real PM would), but nothing in the tree says "this is the trap we're t
 Run the fixture as its own project, outside the clockwork repo:
 
 ```bash
-cp -r trials/calc /tmp/calc && cd /tmp/calc
-uv tool install .                     # in the clockwork repo: builds `harness` + `tracker`
-cp -r skills/* ~/.claude/skills/      # so Claude Code has the design phase
-./setup-tracker.sh                          # seed tracker config + the 4 tickets
-python -m unittest discover -s tests -t .   # sanity: the scaffold test passes
+cp -r trials/calc /tmp/calc && cd /tmp/calc  # create a throwaway copy
+./setup-tracker.sh                           # seed tracker config + the 4 tickets
+python -m unittest discover -s tests -t .    # sanity: the scaffold test passes
 ```
 
 ### Run
 
 ```bash
-harness --once --validate "python -m unittest discover -s tests -t ."   # just the lexer
+harness --once --validate "python -m unittest discover -s tests -t ."   # one iteration
 harness --validate "python -m unittest discover -s tests -t ."          # full loop
 ```
 
@@ -58,14 +56,3 @@ harness --validate "python -m unittest discover -s tests -t ."          # full l
   agrees; a bad implementation bumps `attempts:N` and retries, then auto-escalates at
   `--max-attempts`.
 - **The log** — `.scratch/.harness-log.jsonl`, one JSON line per event.
-
-### Then: the design phase
-
-Once the queue has the division escalation, clear it in Claude Code:
-
-```
-/design-session
-```
-
-It presents the queued questions, patches `docs/design.md` with a new `D-N`, and routes
-the tickets back to `ready-for-agent` citing it. Re-run `harness` to drain the rest.
