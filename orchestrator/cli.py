@@ -7,7 +7,7 @@ import argparse
 import asyncio
 
 from .loop import Clockwork
-from .issues import IssuesCliError
+from .issues import IssuesError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return asyncio.run(Clockwork(args).run())
-    except IssuesCliError as exc:
+    except IssuesError as exc:
         print(f"error: {exc}", flush=True)
         return 1
     except KeyboardInterrupt:

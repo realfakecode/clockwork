@@ -6,13 +6,13 @@ import argparse
 import getpass
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from . import config as config_mod
 from . import deps as deps_mod
 from . import lint as lint_mod
 from . import model
+from . import service as service_mod
 from . import store as store_mod
 from .model import Issue
 from .store import IssuesError
@@ -100,49 +100,6 @@ def print_records(
 
 
 # ---------------------------------------------------------------------------
-# validation helpers
-# ---------------------------------------------------------------------------
-
-
-def check_status_known(config: dict, status: str) -> None:
-    if status not in config_mod.all_statuses(config):
-        raise IssuesError(
-            f"unknown status '{status}'; accepted: {config_mod.status_help(config)}"
-        )
-
-
-def check_category_known(config: dict, category: str | None) -> None:
-    if category is not None and category not in (config.get("categories") or []):
-        raise IssuesError(
-            f"unknown category '{category}'; accepted: {config_mod.category_help(config)}"
-        )
-
-
-def check_transition(config: dict, current: str, target: str) -> None:
-    if not config_mod.can_transition(config, current, target):
-        allowed = config_mod.allowed_transitions(config, current)
-        allowed_str = ", ".join(allowed) if allowed else "(none)"
-        raise IssuesError(
-            f"cannot move issue from '{current}' to '{target}'; "
-            f"allowed from '{current}': {allowed_str} (use --force to override)"
-        )
-
-
-def check_invariants(config: dict, status: str, category: str | None, criteria: list[dict]) -> None:
-    if config_mod.requires_category(config, status) and not category:
-        raise IssuesError(
-            f"status '{status}' requires a category; set one of: "
-            f"{config_mod.category_help(config)} (use --force to override)"
-        )
-    if config_mod.requires_criteria(config, status) and not criteria:
-        raise IssuesError(
-            f"status '{status}' requires at least one acceptance criterion — add with "
-            "`issues criteria <id> --add ...` or `issues new ... --criterion ...` "
-            "(use --force to override)"
-        )
-
-
-# ---------------------------------------------------------------------------
 # subcommands
 # ---------------------------------------------------------------------------
 
@@ -154,37 +111,19 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    config = config_mod.load_config(root)
-    status = args.status
-    if status is None:
-        todo = config.get("statuses", {}).get("todo") or []
-        if not todo:
-            raise IssuesError("no default status available; pass --status")
-        status = todo[0]
-    check_status_known(config, status)
-    check_category_known(config, args.category)
-
-    criteria: list[dict] = []
-    for text in args.criterion or []:
-        model.add_criterion(criteria, text)
-
-    if not args.force:
-        check_invariants(config, status, args.category, criteria)
-
-    issue = store_mod.create_issue(
-        root,
-        args.feature,
-        args.title,
+    issue = service_mod.new(
+        feature=args.feature,
+        title=args.title,
         slug=args.slug,
-        status=status,
+        status=args.status,
         category=args.category,
         labels=args.label or [],
         parent=args.parent,
         blocked_by=parse_id_list(args.blocked_by),
         assignee=args.assignee,
-        acceptance_criteria=criteria,
+        criteria_texts=args.criterion or [],
         body=read_text_arg(args.body),
+        force=args.force,
     )
     if args.json:
         print(json.dumps(issue_to_dict(issue), indent=2))
@@ -252,39 +191,19 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_edit(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    config = config_mod.load_config(root)
-    issue = store_mod.get_issue(root, args.id)
-
-    if args.title is not None:
-        issue.title = args.title
-    if args.slug is not None:
-        issue.slug = args.slug
-    if args.category is not None:
-        check_category_known(config, args.category)
-        issue.category = args.category
-    if args.status is not None:
-        check_status_known(config, args.status)
-        if not args.force:
-            check_transition(config, issue.status, args.status)
-            check_invariants(config, args.status, issue.category, issue.acceptance_criteria)
-        issue.status = args.status
-    if args.parent is not None:
-        issue.parent = args.parent
-    if args.assignee is not None:
-        issue.assignee = args.assignee
-    body_text = read_text_arg(args.body)
-    if body_text is not None:
-        issue.body = body_text if body_text.endswith("\n") else body_text + "\n"
-
-    for label in args.add_label or []:
-        if label not in issue.labels:
-            issue.labels.append(label)
-    for label in args.remove_label or []:
-        if label in issue.labels:
-            issue.labels.remove(label)
-
-    store_mod.write_issue(issue)
+    issue = service_mod.edit(
+        args.id,
+        title=args.title,
+        slug=args.slug,
+        status=args.status,
+        category=args.category,
+        add_labels=args.add_label,
+        remove_labels=args.remove_label,
+        parent=args.parent,
+        assignee=args.assignee,
+        body=read_text_arg(args.body),
+        force=args.force,
+    )
     print(f"updated issue {issue.id}")
     return 0
 
@@ -299,36 +218,23 @@ def one_text_arg(positional: str | None, flagged: str | None, name: str) -> str 
 
 
 def cmd_comment(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    issue = store_mod.get_issue(root, args.id)
     text = one_text_arg(args.body, args.body_flag, "the comment body")
     if not text or not text.strip():
         raise IssuesError("comment body is empty (pass it as an argument or via '-' for stdin)")
-    now = datetime.now().replace(microsecond=0)
-    issue.body = model.append_comment(issue.body, text.strip(), now)
-    store_mod.write_issue(issue)
+    issue = service_mod.comment(args.id, text)
     print(f"commented on issue {issue.id}")
     return 0
 
 
 def cmd_archive(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    config = config_mod.load_config(root)
-
     if args.done:
-        index = store_mod.load_index(root)
-        targets = [
-            r.id for r in index.values() if not r.location.archived and deps_mod.is_done(r, config)
-        ]
-        targets.sort()
-        for issue_id in targets:
-            store_mod.archive_issue(root, issue_id)
+        targets = service_mod.archive_done()
         print(f"archived {len(targets)} issue(s): {', '.join(str(t) for t in targets) or '(none)'}")
         return 0
 
     if args.id is None:
         raise IssuesError("pass an issue id or --done")
-    issue = store_mod.archive_issue(root, args.id)
+    issue = service_mod.archive(args.id)
     print(f"archived issue {issue.id} -> {issue.location.path}")
     return 0
 
@@ -349,23 +255,13 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
 
 def cmd_block(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    issue = store_mod.get_issue(root, args.id)
-    add = parse_id_list(args.on)
-    for issue_id in add:
-        if issue_id not in issue.blocked_by:
-            issue.blocked_by.append(issue_id)
-    store_mod.write_issue(issue)
+    issue = service_mod.block(args.id, on=parse_id_list(args.on))
     print(f"issue {issue.id} now blocked_by {issue.blocked_by}")
     return 0
 
 
 def cmd_unblock(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    issue = store_mod.get_issue(root, args.id)
-    remove = set(parse_id_list(args.on))
-    issue.blocked_by = [b for b in issue.blocked_by if b not in remove]
-    store_mod.write_issue(issue)
+    issue = service_mod.unblock(args.id, on=parse_id_list(args.on))
     print(f"issue {issue.id} now blocked_by {issue.blocked_by}")
     return 0
 
@@ -434,106 +330,59 @@ def cmd_parent(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    config = config_mod.load_config(root)
-    issue = store_mod.get_issue(root, args.id)
     if args.status is None:
-        print(issue.status)
+        print(service_mod.show(args.id).status)
         return 0
-    check_status_known(config, args.status)
-    if not args.force:
-        check_transition(config, issue.status, args.status)
-        check_invariants(config, args.status, issue.category, issue.acceptance_criteria)
-    issue.status = args.status
-    store_mod.write_issue(issue)
+    issue = service_mod.set_status(args.id, args.status, force=args.force)
     print(f"issue {issue.id} status -> {args.status}")
     return 0
 
 
 def cmd_claim(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    issue = store_mod.get_issue(root, args.id)
-    issue.assignee = args.as_name or getpass.getuser()
-    store_mod.write_issue(issue)
+    issue = service_mod.claim(args.id, args.as_name or getpass.getuser())
     print(f"issue {issue.id} claimed by {issue.assignee}")
     return 0
 
 
 def cmd_release(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    config = config_mod.load_config(root)
     index = store_mod.load_index(root)
 
     if args.all:
         targets = [
-            r
-            for r in index.values()
-            if not r.location.archived and r.assignee and (not args.assignee or r.assignee == args.assignee)
+            issue.id
+            for issue in index.values()
+            if not issue.location.archived and issue.assignee
+            and (not args.assignee or issue.assignee == args.assignee)
         ]
     else:
         if not args.ids:
             raise IssuesError("pass issue id(s) or --all")
-        targets = []
         for issue_id in args.ids:
-            record = index.get(issue_id)
-            if record is None:
+            if index.get(issue_id) is None:
                 raise IssuesError(f"no issue with id {issue_id}")
-            targets.append(record)
+        targets = list(args.ids)
 
-    for record in targets:
-        record.assignee = None
-        if not args.keep_status and config_mod.status_bucket(config, record.status) != "done":
-            record.status = config["unclaim_status"]
-        store_mod.write_issue(record)
+    for issue_id in targets:
+        service_mod.release(issue_id, keep_status=args.keep_status)
 
-    ids = ", ".join(str(r.id) for r in sorted(targets, key=lambda r: r.id)) or "(none)"
+    ids = ", ".join(str(t) for t in sorted(targets)) or "(none)"
     print(f"released {len(targets)} issue(s): {ids}")
     return 0
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    config = config_mod.load_config(root)
-    status = args.status or "done"
-    check_status_known(config, status)
-    issue = store_mod.get_issue(root, args.id)
-    if not args.force:
-        check_transition(config, issue.status, status)
-        check_invariants(config, status, issue.category, issue.acceptance_criteria)
     answer = one_text_arg(args.answer, args.answer_flag, "the answer")
-    if answer and answer.strip():
-        now = datetime.now().replace(microsecond=0)
-        issue.body = model.append_comment(issue.body, answer.strip(), now)
-    issue.status = status
-    store_mod.write_issue(issue)
-    print(f"issue {issue.id} resolved -> {status}")
+    issue = service_mod.resolve(args.id, answer=answer, status=args.status, force=args.force)
+    print(f"issue {issue.id} resolved -> {issue.status}")
     return 0
 
 
 def cmd_criteria(args: argparse.Namespace) -> int:
-    root = store_mod.find_root()
-    issue = store_mod.get_issue(root, args.id)
+    issue, added = service_mod.edit_criteria(
+        args.id, add=args.add, check=args.check, uncheck=args.uncheck, remove=args.remove
+    )
     criteria = issue.acceptance_criteria
-    changed = False
-    added: list[dict] = []
-
-    for text in args.add or []:
-        model.add_criterion(criteria, text)
-        added.append(criteria[-1])
-        changed = True
-    for index in args.check or []:
-        model.set_criterion_done(criteria, index, True)
-        changed = True
-    for index in args.uncheck or []:
-        model.set_criterion_done(criteria, index, False)
-        changed = True
-    # Remove in descending order so earlier indices stay valid.
-    for index in sorted(args.remove or [], reverse=True):
-        model.remove_criterion(criteria, index)
-        changed = True
-
-    if changed:
-        store_mod.write_issue(issue)
 
     if args.json:
         print(json.dumps(criteria, indent=2))

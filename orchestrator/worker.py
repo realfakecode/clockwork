@@ -17,6 +17,7 @@ from harnesses import (
     SessionEndEvent,
     TurnEndEvent,
 )
+from issues.model import Issue
 
 from .formatter import EventFormatter
 
@@ -36,21 +37,21 @@ def render_criteria(criteria: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_children(children: list[dict]) -> str:
+def render_children(children: list[Issue]) -> str:
     if not children:
         return "(no child tickets)"
     return "\n".join(
-        f"- #{c['id']} [{c.get('status', '?')}] {c.get('title', '')}".rstrip()
+        f"- #{c.id} [{c.status or '?'}] {c.title}".rstrip()
         for c in children
     )
 
 
-def build_worker_prompt(issue: dict, design_path: str, vocab_path: str) -> str:
-    """Per-ticket worker prompt from `issues show <id> --json`."""
-    ticket_id = issue["id"]
-    title = issue.get("title", "")
-    body = (issue.get("body") or "").strip()
-    criteria = render_criteria(issue.get("acceptance_criteria") or [])
+def build_worker_prompt(issue: Issue, design_path: str, vocab_path: str) -> str:
+    """Per-ticket worker prompt for one ticket."""
+    ticket_id = issue.id
+    title = issue.title
+    body = (issue.body or "").strip()
+    criteria = render_criteria(issue.acceptance_criteria or [])
 
     return f"""\
 You are an unattended implementation worker. Implement exactly one ticket, end to
@@ -126,15 +127,15 @@ Begin now.
 """
 
 
-def build_triage_prompt(issue: dict, design_path: str, vocab_path: str) -> str:
+def build_triage_prompt(issue: Issue, design_path: str, vocab_path: str) -> str:
     """Turn a bare `needs-triage` ticket into an agent-ready one. The triage agent
     fills in the description + acceptance criteria + category, then promotes the
     ticket to `ready-for-agent`. It does NOT implement anything — promotion (or an
     escalation to `needs-info`) is the only outcome the loop acts on."""
-    ticket_id = issue["id"]
-    title = issue.get("title", "")
-    body = (issue.get("body") or "").strip()
-    criteria = render_criteria(issue.get("acceptance_criteria") or [])
+    ticket_id = issue.id
+    title = issue.title
+    body = (issue.body or "").strip()
+    criteria = render_criteria(issue.acceptance_criteria or [])
 
     return f"""\
 You are a triage agent. A ticket has been filed but is too thin to hand to an
@@ -214,7 +215,7 @@ Begin now.
 
 
 def build_validator_prompt(
-    issue: dict, design_path: str, vocab_path: str, test_summary: str, empty_diff: bool = False
+    issue: Issue, design_path: str, vocab_path: str, test_summary: str, empty_diff: bool = False
 ) -> str:
     """Read-only judge of a just-finished implementation against the criteria.
 
@@ -223,10 +224,10 @@ def build_validator_prompt(
     already satisfied by earlier work, or a parent ticket can be done once every
     child is — so it's folded into the judging instructions as a skepticism flag
     rather than handled as a separate gate."""
-    ticket_id = issue["id"]
-    title = issue.get("title", "")
-    body = (issue.get("body") or "").strip()
-    criteria = render_criteria(issue.get("acceptance_criteria") or [])
+    ticket_id = issue.id
+    title = issue.title
+    body = (issue.body or "").strip()
+    criteria = render_criteria(issue.acceptance_criteria or [])
     empty_diff_check = f"""
 0. EMPTY DIFF. The worker made NO changes outside `.scratch/`. This is only correct
    if every acceptance criterion is ALREADY genuinely satisfied by the code as it
@@ -296,8 +297,8 @@ End your reply with EXACTLY one line, nothing after it — exactly one of:
 
 
 def build_milestone_review_prompt(
-    map_issue: dict,
-    children: list[dict],
+    map_issue: Issue,
+    children: list[Issue],
     design_path: str,
     vocab_path: str,
     *,
@@ -311,10 +312,10 @@ def build_milestone_review_prompt(
     CRITICAL gaps (the self-healing loop) — filing nothing is the fixpoint that
     unlocks the retrospective; otherwise it only reports. Read-only on code either
     way."""
-    map_id = map_issue["id"]
-    feature = map_issue.get("feature", "")
-    title = map_issue.get("title", "")
-    body = (map_issue.get("body") or "").strip()
+    map_id = map_issue.id
+    feature = map_issue.feature
+    title = map_issue.title
+    body = (map_issue.body or "").strip()
     kids = render_children(children)
 
     if can_file_tickets:
@@ -395,8 +396,8 @@ Begin now.
 
 
 def build_retrospective_prompt(
-    map_issue: dict,
-    children: list[dict],
+    map_issue: Issue,
+    children: list[Issue],
     design_path: str,
     vocab_path: str,
     log_excerpt: str,
@@ -405,9 +406,9 @@ def build_retrospective_prompt(
     review — the milestone review already passed — it mines how the effort *ran* for
     lessons its canon should absorb, and proposes them for a human to ratify. Its only
     write is a single summary comment on the map; advisory by design."""
-    map_id = map_issue["id"]
-    title = map_issue.get("title", "")
-    body = (map_issue.get("body") or "").strip()
+    map_id = map_issue.id
+    title = map_issue.title
+    body = (map_issue.body or "").strip()
     kids = render_children(children)
 
     return f"""\

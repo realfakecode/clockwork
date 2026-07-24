@@ -76,17 +76,17 @@ class Clockwork:
         issues.release(ticket_id, cwd=self.cwd, keep_status=True)
         issues.comment(ticket_id, body, cwd=self.cwd)
 
-    def _pick_ticket(self) -> dict | None:
+    def _pick_ticket(self) -> issues.Issue | None:
         for record in issues.ready_unclaimed(self.cwd, feature=self.args.feature):
-            if record.get("status") == "ready-for-agent":
+            if record.status == "ready-for-agent":
                 return record
         return None
 
-    def _pick_triage_ticket(self) -> dict | None:
+    def _pick_triage_ticket(self) -> issues.Issue | None:
         """A bare ticket on the unclaimed frontier awaiting specification. Only
         consulted when nothing is ready-for-agent, so dispatch never starves."""
         for record in issues.ready_unclaimed(self.cwd, feature=self.args.feature):
-            if record.get("status") == "needs-triage":
+            if record.status == "needs-triage":
                 return record
         return None
 
@@ -182,12 +182,12 @@ class Clockwork:
             return True, "nothing to commit"
         return False, output[-_OUTPUT_TAIL:]
 
-    def _commit_ticket(self, ticket_id: int, issue: dict) -> None:
+    def _commit_ticket(self, ticket_id: int, issue: issues.Issue) -> None:
         """One commit per resolved ticket so the tree is clean before the next
         dispatch — an uncommitted diff otherwise leaks into the next worker's and
         the read-only validator's view (`git diff`/`git status`). Simple by design:
         stage everything (including this ticket's `.scratch` state) and commit."""
-        title = (issue.get("title") or "").strip()
+        title = (issue.title or "").strip()
         ok, detail = self._git_commit_all(f"ticket #{ticket_id}: {title}".rstrip())
         if not ok:
             self.log("commit", ticket=ticket_id, ok=False, error=detail)
@@ -219,8 +219,8 @@ class Clockwork:
         elif detail != "nothing to commit":
             self.log("commit", ticket=map_id, stage="milestone", ok=True, sha=detail or None)
 
-    def _accept(self, ticket_id: int, issue: dict) -> None:
-        for i in range(len(issue.get("acceptance_criteria") or [])):
+    def _accept(self, ticket_id: int, issue: issues.Issue) -> None:
+        for i in range(len(issue.acceptance_criteria or [])):
             issues.check_criterion(ticket_id, i, cwd=self.cwd)
         issues.resolve(
             ticket_id, cwd=self.cwd,
@@ -231,7 +231,7 @@ class Clockwork:
 
     async def _validate_and_finish(self, ticket_id: int, attempts: int) -> None:
         issue = issues.show(ticket_id, cwd=self.cwd)
-        if issue.get("status") == "needs-decision":
+        if issue.status == "needs-decision":
             # Worker self-escalated (QUESTION comment already in .scratch). Discard
             # its half-done code but keep the escalation payload for the design phase.
             self._reset_worktree(ticket_id)
@@ -308,7 +308,7 @@ class Clockwork:
         await worker.drive(self.command, str(self.cwd), prompt,
                            label=f"triage #{ticket_id}")
 
-        status = issues.show(ticket_id, cwd=self.cwd).get("status")
+        status = issues.show(ticket_id, cwd=self.cwd).status
         if status == "ready-for-agent":
             self.log("triage", ticket=ticket_id, stage="done", status=status)
         elif status in ("needs-info", "ready-for-human", "wontfix"):
@@ -339,12 +339,12 @@ class Clockwork:
     # unlocks a one-shot retrospective that proposes canon changes for a human.
 
     @staticmethod
-    def _all_children_terminal(children: list[dict]) -> bool:
+    def _all_children_terminal(children: list[issues.Issue]) -> bool:
         return bool(children) and all(
-            c.get("status") in issues.TERMINAL_STATUSES for c in children
+            c.status in issues.TERMINAL_STATUSES for c in children
         )
 
-    def _pick_completed_map(self) -> dict | None:
+    def _pick_completed_map(self) -> issues.Issue | None:
         """A `wayfinding` map whose charted frontier has fully cleared and whose
         current size exceeds its last clean review — so a settled map stays quiet
         while fix tickets or graduated fog reopen it. Only consulted when nothing is
@@ -352,11 +352,11 @@ class Clockwork:
         if not self.args.milestone_review:
             return None
         for candidate in issues.list_status("wayfinding", cwd=self.cwd):
-            if self.args.feature and candidate.get("feature") != self.args.feature:
+            if self.args.feature and candidate.feature != self.args.feature:
                 continue
-            if issues.MILESTONE_BLOCKED_LABEL in (candidate.get("labels") or []):
+            if issues.MILESTONE_BLOCKED_LABEL in candidate.labels:
                 continue
-            kids = issues.children(candidate["id"], cwd=self.cwd)
+            kids = issues.children(candidate.id, cwd=self.cwd)
             if not self._all_children_terminal(kids):
                 continue
             if len(kids) <= issues.read_numbered_label(candidate, issues.MILESTONE_REVIEWED_PREFIX):
@@ -364,8 +364,8 @@ class Clockwork:
             return candidate
         return None
 
-    async def _milestone(self, map_issue: dict) -> None:
-        map_id = map_issue["id"]
+    async def _milestone(self, map_issue: issues.Issue) -> None:
+        map_id = map_issue.id
         round_n = issues.read_numbered_label(map_issue, issues.MILESTONE_ROUND_PREFIX)
 
         # Convergence backstop: if the self-heal loop keeps surfacing gaps, stop and
@@ -385,7 +385,7 @@ class Clockwork:
             return
 
         kids = issues.children(map_id, cwd=self.cwd)
-        kids_before = {k["id"] for k in kids}
+        kids_before = {k.id for k in kids}
         issues.set_numbered_label(map_issue, issues.MILESTONE_ROUND_PREFIX, round_n + 1, cwd=self.cwd)
         self.log("milestone", ticket=map_id, stage="review", round=round_n + 1)
 
@@ -398,13 +398,13 @@ class Clockwork:
                            label=f"milestone-review #{map_id}")
 
         new_kids = [k for k in issues.children(map_id, cwd=self.cwd)
-                    if k["id"] not in kids_before]
+                    if k.id not in kids_before]
         if new_kids:
             # Not the fixpoint: the review filed fix tickets. They re-open the
             # frontier; leaving the reviewed marker unset is what lets the review
             # re-fire once they clear.
             self.log("milestone", ticket=map_id, stage="filed",
-                     tickets=[k["id"] for k in new_kids])
+                     tickets=[k.id for k in new_kids])
             self._commit_milestone(map_id, f"review filed {len(new_kids)} follow-up ticket(s)")
             return
 
@@ -422,7 +422,7 @@ class Clockwork:
     async def _retrospect(self, map_id: int) -> None:
         map_issue = issues.show(map_id, cwd=self.cwd)
         children = issues.children(map_id, cwd=self.cwd)
-        excerpt = self._effort_log_excerpt([map_id, *(c["id"] for c in children)])
+        excerpt = self._effort_log_excerpt([map_id, *(c.id for c in children)])
         prompt = worker.build_retrospective_prompt(
             map_issue, children, self.args.design, self.args.vocab, excerpt)
         await worker.drive(self.command, str(self.cwd), prompt,
@@ -460,10 +460,10 @@ class Clockwork:
         if ticket is None:
             triage_ticket = self._pick_triage_ticket()
             if triage_ticket is not None:
-                triage_id = triage_ticket["id"]
+                triage_id = triage_ticket.id
                 if args.dry_run:
                     self.log("dry-run", would="triage", ticket=triage_id,
-                             title=triage_ticket.get("title"))
+                             title=triage_ticket.title)
                     return "stop:dry-run"
                 await self._triage(triage_id)
                 return "continue"
@@ -471,16 +471,16 @@ class Clockwork:
             # have fully cleared. Fall through to a whole-effort milestone review.
             completed_map = self._pick_completed_map()
             if completed_map is not None:
-                map_id = completed_map["id"]
+                map_id = completed_map.id
                 if args.dry_run:
                     self.log("dry-run", would="milestone", ticket=map_id,
-                             title=completed_map.get("title"))
+                             title=completed_map.title)
                     return "stop:dry-run"
                 await self._milestone(completed_map)
                 return "continue"
             self.log("halt", reason="no-ready")
             return "stop:no-ready"
-        ticket_id = ticket["id"]
+        ticket_id = ticket.id
 
         # 3. Attempt cap — a cursed ticket shouldn't burn the whole run.
         attempts = issues.read_attempts(ticket)
@@ -497,13 +497,13 @@ class Clockwork:
 
         if args.dry_run:
             self.log("dry-run", would="dispatch", ticket=ticket_id,
-                     title=ticket.get("title"), attempts=attempts)
+                     title=ticket.title, attempts=attempts)
             return "stop:dry-run"
 
         # 4. Claim + mark in-progress.
         issues.claim(ticket_id, WORKER_ASSIGNEE, cwd=self.cwd)
         issues.set_status(ticket_id, "in-progress", cwd=self.cwd)
-        self.log("dispatch", ticket=ticket_id, title=ticket.get("title"), attempts=attempts)
+        self.log("dispatch", ticket=ticket_id, title=ticket.title, attempts=attempts)
 
         # 5. Run the worker to a stop, then validate before accepting.
         issue = issues.show(ticket_id, cwd=self.cwd)

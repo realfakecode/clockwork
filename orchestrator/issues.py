@@ -1,132 +1,71 @@
-"""Thin wrapper over the real `issues` CLI (dogfooding the same interface the
-worker uses). Every call shells out to `issues … --json` and returns parsed
-dicts; the loop makes decisions purely from the state observed here.
+"""In-process access to the `issues` tracker.
 
-The command is `issues` on PATH by default (installed alongside `clockwork` by the
-same `uv tool install .`). Override with `CLOCKWORK_ISSUES_CMD` for local dev,
-e.g. `CLOCKWORK_ISSUES_CMD="uv run issues"`.
+The orchestrator and the `issues` CLI share one service layer (`issues.service`).
+This module re-exports the operations the loop uses — so the `issues.*` namespace
+it calls resolves to real, traceable functions — and adds the retry/milestone
+label bookkeeping the tracker itself knows nothing about.
+
+Reads return typed `Issue` objects; the loop decides everything from the state
+observed here. (`orchestrator.issues` and the top-level `issues` package are
+distinct modules; the absolute import below resolves to the package.)
 """
 
 from __future__ import annotations
 
-import json
-import os
-import shlex
-import subprocess
 from pathlib import Path
 
+from issues.model import Issue
+from issues.service import (
+    IssuesError,
+    check_criterion,
+    children,
+    claim,
+    comment,
+    edit_labels,
+    list_status,
+    ready_unclaimed,
+    release,
+    resolve,
+    set_status,
+    show,
+)
+
+__all__ = [
+    "Issue",
+    "IssuesError",
+    "check_criterion",
+    "children",
+    "claim",
+    "comment",
+    "edit_labels",
+    "list_status",
+    "ready_unclaimed",
+    "release",
+    "resolve",
+    "set_status",
+    "show",
+    "read_attempts",
+    "bump_attempts",
+    "read_numbered_label",
+    "set_numbered_label",
+    "clear_numbered_label",
+    "add_label",
+    "ATTEMPTS_PREFIX",
+    "TERMINAL_STATUSES",
+    "MILESTONE_ROUND_PREFIX",
+    "MILESTONE_REVIEWED_PREFIX",
+    "MILESTONE_BLOCKED_LABEL",
+]
+
 ATTEMPTS_PREFIX = "attempts:"
-
-
-class IssuesCliError(RuntimeError):
-    """A `issues` invocation exited non-zero."""
-
-    def __init__(self, argv: list[str], returncode: int, stderr: str):
-        super().__init__(f"issues {' '.join(argv)} exited {returncode}: {stderr.strip()}")
-        self.argv = argv
-        self.returncode = returncode
-        self.stderr = stderr
-
-
-def _base_cmd() -> list[str]:
-    return shlex.split(os.environ.get("CLOCKWORK_ISSUES_CMD", "issues"))
-
-
-def _run(args: list[str], *, cwd: str | Path | None = None) -> str:
-    argv = [*_base_cmd(), *args]
-    proc = subprocess.run(
-        argv, cwd=cwd, capture_output=True, text=True
-    )
-    if proc.returncode != 0:
-        raise IssuesCliError(args, proc.returncode, proc.stderr)
-    return proc.stdout
-
-
-def _run_json(args: list[str], *, cwd: str | Path | None = None):
-    return json.loads(_run([*args, "--json"], cwd=cwd))
-
-
-# -- reads -----------------------------------------------------------------
-
-
-def ready_unclaimed(cwd: str | Path | None = None, *, feature: str | None = None) -> list[dict]:
-    args = ["ready", "--unclaimed"]
-    if feature:
-        args += ["--feature", feature]
-    return _run_json(args, cwd=cwd)
-
-
-def list_status(status: str, cwd: str | Path | None = None) -> list[dict]:
-    return _run_json(["list", "--status", status], cwd=cwd)
-
-
-def show(issue_id: int, cwd: str | Path | None = None) -> dict:
-    return _run_json(["show", str(issue_id)], cwd=cwd)
-
-
-def children(issue_id: int, cwd: str | Path | None = None) -> list[dict]:
-    """Direct children (issues whose `parent` is `issue_id`), id-sorted."""
-    return _run_json(["children", str(issue_id)], cwd=cwd)
-
-
-# -- writes ----------------------------------------------------------------
-
-
-def set_status(issue_id: int, status: str, cwd: str | Path | None = None) -> None:
-    _run(["status", str(issue_id), status], cwd=cwd)
-
-
-def claim(issue_id: int, as_name: str, cwd: str | Path | None = None) -> None:
-    _run(["claim", str(issue_id), "--as", as_name], cwd=cwd)
-
-
-def release(issue_id: int, cwd: str | Path | None = None, *, keep_status: bool = False) -> None:
-    args = ["release", str(issue_id)]
-    if keep_status:
-        args.append("--keep-status")
-    _run(args, cwd=cwd)
-
-
-def comment(issue_id: int, body: str, cwd: str | Path | None = None) -> None:
-    # Pass the body via stdin (--body -) so newlines/quotes survive intact.
-    argv = [*_base_cmd(), "comment", str(issue_id), "--body", "-"]
-    proc = subprocess.run(argv, cwd=cwd, input=body, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise IssuesCliError(argv, proc.returncode, proc.stderr)
-
-
-def check_criterion(issue_id: int, index: int, cwd: str | Path | None = None) -> None:
-    _run(["criteria", str(issue_id), "--check", str(index)], cwd=cwd)
-
-
-def resolve(issue_id: int, cwd: str | Path | None = None, *, answer: str | None = None) -> None:
-    args = ["resolve", str(issue_id)]
-    if answer:
-        args += ["--answer", answer]
-    _run(args, cwd=cwd)
-
-
-def edit_labels(
-    issue_id: int,
-    cwd: str | Path | None = None,
-    *,
-    add: list[str] | None = None,
-    remove: list[str] | None = None,
-) -> None:
-    args = ["edit", str(issue_id)]
-    for label in remove or []:
-        args += ["--remove-label", label]
-    for label in add or []:
-        args += ["--add-label", label]
-    _run(args, cwd=cwd)
 
 
 # -- attempt-counter label helpers ----------------------------------------
 
 
-def read_attempts(issue: dict) -> int:
+def read_attempts(issue: Issue) -> int:
     """Current `attempts:N` value from an issue's labels (0 if absent)."""
-    for label in issue.get("labels") or []:
+    for label in issue.labels:
         if label.startswith(ATTEMPTS_PREFIX):
             try:
                 return int(label[len(ATTEMPTS_PREFIX):])
@@ -161,9 +100,9 @@ MILESTONE_REVIEWED_PREFIX = "milestone-reviewed:"
 MILESTONE_BLOCKED_LABEL = "milestone-blocked"
 
 
-def read_numbered_label(issue: dict, prefix: str) -> int:
+def read_numbered_label(issue: Issue, prefix: str) -> int:
     """Value of a `prefix<N>` label on the issue (0 if absent or unparseable)."""
-    for label in issue.get("labels") or []:
+    for label in issue.labels:
         if label.startswith(prefix):
             try:
                 return int(label[len(prefix):])
@@ -172,19 +111,19 @@ def read_numbered_label(issue: dict, prefix: str) -> int:
     return 0
 
 
-def set_numbered_label(issue: dict, prefix: str, value: int, cwd: str | Path | None = None) -> None:
+def set_numbered_label(issue: Issue, prefix: str, value: int, cwd: str | Path | None = None) -> None:
     """Replace every `prefix<n>` label on the issue with a single `prefix<value>`.
-    `issue` supplies the labels to strip, so pass a freshly-read dict — a stale
+    `issue` supplies the labels to strip, so pass a freshly-read issue — a stale
     snapshot would leave an orphaned counter behind."""
-    remove = [label for label in (issue.get("labels") or []) if label.startswith(prefix)]
-    edit_labels(issue["id"], cwd, remove=remove or None, add=[f"{prefix}{value}"])
+    remove = [label for label in issue.labels if label.startswith(prefix)]
+    edit_labels(issue.id, cwd, remove=remove or None, add=[f"{prefix}{value}"])
 
 
-def clear_numbered_label(issue: dict, prefix: str, cwd: str | Path | None = None) -> None:
+def clear_numbered_label(issue: Issue, prefix: str, cwd: str | Path | None = None) -> None:
     """Drop every `prefix<n>` label from the issue (no-op when none are present)."""
-    remove = [label for label in (issue.get("labels") or []) if label.startswith(prefix)]
+    remove = [label for label in issue.labels if label.startswith(prefix)]
     if remove:
-        edit_labels(issue["id"], cwd, remove=remove)
+        edit_labels(issue.id, cwd, remove=remove)
 
 
 def add_label(issue_id: int, label: str, cwd: str | Path | None = None) -> None:

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
 
 import pytest
 
+from issues.model import Issue
 from orchestrator import issues as issuesmod
 from orchestrator import loop as loopmod
 from orchestrator import worker as workermod
@@ -23,12 +25,23 @@ _STUBBED = (
 )
 
 
+def mk_issue(mid: int, *, status="wayfinding", title=None, feature="feat",
+             labels=None, body="## Destination\nx") -> Issue:
+    """A minimal in-memory Issue for the loop to read (no file behind it)."""
+    return Issue(
+        id=mid, slug=f"i{mid}", feature=feature, status=status,
+        created=datetime(2024, 1, 1),
+        title=f"map {mid}" if title is None else title,
+        labels=list(labels or []), body=body,
+    )
+
+
 class FakeTracker:
     """In-memory stand-in for the issue-tracker state the loop reads and writes."""
 
     def __init__(self):
         self.labels: dict[int, list[str]] = {}
-        self.kids: dict[int, list[dict]] = {}
+        self.kids: dict[int, list[Issue]] = {}
         self.maps: list[int] = []
         self.feature: dict[int, str] = {}
         self.comments: list[tuple[int, str]] = []
@@ -40,27 +53,24 @@ class FakeTracker:
         if labels:
             self.labels[mid] = list(labels)
         self.kids[mid] = [
-            {"id": mid * 100 + i, "status": child_status, "title": f"k{i}"}
+            mk_issue(mid * 100 + i, status=child_status, title=f"k{i}", feature=feature)
             for i in range(n_children)
         ]
         return mid
 
-    def map_dict(self, mid: int) -> dict:
-        return {
-            "id": mid, "status": "wayfinding", "title": f"map {mid}",
-            "feature": self.feature.get(mid, "feat"),
-            "body": "## Destination\nx", "labels": list(self.labels.get(mid, [])),
-        }
+    def map_issue(self, mid: int) -> Issue:
+        return mk_issue(mid, feature=self.feature.get(mid, "feat"),
+                        labels=list(self.labels.get(mid, [])))
 
     # -- stubbed issues.* --
     def list_status(self, status, cwd=None):
-        return [self.map_dict(m) for m in self.maps] if status == "wayfinding" else []
+        return [self.map_issue(m) for m in self.maps] if status == "wayfinding" else []
 
     def children(self, mid, cwd=None):
-        return [dict(k) for k in self.kids.get(mid, [])]
+        return list(self.kids.get(mid, []))
 
     def show(self, mid, cwd=None):
-        return self.map_dict(mid)
+        return self.map_issue(mid)
 
     def add_label(self, mid, label, cwd=None):
         self.labels.setdefault(mid, []).append(label)
@@ -69,12 +79,12 @@ class FakeTracker:
         self.comments.append((mid, body))
 
     def set_numbered_label(self, issue, prefix, value, cwd=None):
-        kept = [l for l in self.labels.get(issue["id"], []) if not l.startswith(prefix)]
-        self.labels[issue["id"]] = kept + [f"{prefix}{value}"]
+        kept = [l for l in self.labels.get(issue.id, []) if not l.startswith(prefix)]
+        self.labels[issue.id] = kept + [f"{prefix}{value}"]
 
     def clear_numbered_label(self, issue, prefix, cwd=None):
-        self.labels[issue["id"]] = [
-            l for l in self.labels.get(issue["id"], []) if not l.startswith(prefix)
+        self.labels[issue.id] = [
+            l for l in self.labels.get(issue.id, []) if not l.startswith(prefix)
         ]
 
     # -- assertion helpers --
@@ -120,7 +130,7 @@ def drive_milestone(monkeypatch, cw, map_id, tracker, effect):
         return "ok"
 
     monkeypatch.setattr(workermod, "drive", fake_drive)
-    asyncio.run(cw._milestone(tracker.map_dict(map_id)))
+    asyncio.run(cw._milestone(tracker.map_issue(map_id)))
 
 
 def milestone_stages(cw):
@@ -130,11 +140,11 @@ def milestone_stages(cw):
 # -- pure helpers ---------------------------------------------------------
 
 def test_read_numbered_label_absent_is_zero():
-    assert issuesmod.read_numbered_label({"labels": ["other"]}, "milestone-round:") == 0
+    assert issuesmod.read_numbered_label(mk_issue(1, labels=["other"]), "milestone-round:") == 0
 
 
 def test_read_numbered_label_reads_value():
-    assert issuesmod.read_numbered_label({"labels": ["milestone-round:4"]}, "milestone-round:") == 4
+    assert issuesmod.read_numbered_label(mk_issue(1, labels=["milestone-round:4"]), "milestone-round:") == 4
 
 
 @pytest.mark.parametrize("statuses, expected", [
@@ -144,7 +154,7 @@ def test_read_numbered_label_reads_value():
     (["needs-triage"], False),
 ])
 def test_all_children_terminal(statuses, expected):
-    children = [{"status": s} for s in statuses]
+    children = [mk_issue(i, status=s) for i, s in enumerate(statuses)]
     assert loopmod.Clockwork._all_children_terminal(children) is expected
 
 
@@ -160,7 +170,7 @@ def test_log_ticket_malformed_is_none():
 
 def test_cleared_frontier_never_reviewed_is_eligible(tracker, tmp_path):
     tracker.add_map(1, n_children=3)
-    assert make_clockwork(tmp_path)._pick_completed_map()["id"] == 1
+    assert make_clockwork(tmp_path)._pick_completed_map().id == 1
 
 
 def test_reviewed_at_current_size_not_eligible(tracker, tmp_path):
@@ -170,7 +180,7 @@ def test_reviewed_at_current_size_not_eligible(tracker, tmp_path):
 
 def test_grew_since_review_is_eligible(tracker, tmp_path):
     tracker.add_map(1, n_children=5, labels=["milestone-reviewed:3"])
-    assert make_clockwork(tmp_path)._pick_completed_map()["id"] == 1
+    assert make_clockwork(tmp_path)._pick_completed_map().id == 1
 
 
 def test_blocked_label_not_eligible(tracker, tmp_path):
@@ -180,7 +190,7 @@ def test_blocked_label_not_eligible(tracker, tmp_path):
 
 def test_in_flight_child_not_eligible(tracker, tmp_path):
     tracker.add_map(1, n_children=3)
-    tracker.kids[1][0]["status"] = "in-progress"
+    tracker.kids[1][0].status = "in-progress"
     assert make_clockwork(tmp_path)._pick_completed_map() is None
 
 
@@ -206,8 +216,8 @@ def test_review_files_tickets_refires(tracker, tmp_path, monkeypatch):
 
     def files_two(label, tr):
         if label.startswith("milestone-review"):
-            tr.kids[1] += [{"id": 200, "status": "needs-triage", "title": "fix a"},
-                           {"id": 201, "status": "needs-triage", "title": "fix b"}]
+            tr.kids[1] += [mk_issue(200, status="needs-triage", title="fix a"),
+                           mk_issue(201, status="needs-triage", title="fix b")]
 
     cw = make_clockwork(tmp_path)
     drive_milestone(monkeypatch, cw, 1, tracker, files_two)
