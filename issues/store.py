@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
 from . import config as config_mod
 from . import model
 from .config import SCRATCH_DIRNAME
-from .model import Issue
+from .model import Issue, Location
 
 ISSUES_DIRNAME = "issues"
 ARCHIVE_DIRNAME = "archive"
@@ -39,18 +38,6 @@ def _serialize_checked(issue: Issue) -> str:
             f"internal error: issue {issue.id} does not round-trip through serialization"
         )
     return text
-
-
-@dataclass
-class IssueRecord:
-    issue: Issue
-    path: Path
-    feature: str
-    archived: bool
-
-    @property
-    def id(self) -> int:
-        return self.issue.id
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -116,21 +103,22 @@ def iter_issue_files(root: Path):
             yield path, None, True
 
 
-def load_index(root: Path) -> dict[int, IssueRecord]:
+def load_index(root: Path) -> dict[int, Issue]:
     """Scan all issue files into an id-keyed index. Skips unparsable files."""
-    index: dict[int, IssueRecord] = {}
+    index: dict[int, Issue] = {}
     for path, _dir_feature, archived in iter_issue_files(root):
         try:
             issue = model.parse_issue(path)
         except model.ParseError:
             continue
-        index[issue.id] = IssueRecord(issue=issue, path=path, feature=issue.feature, archived=archived)
+        issue.location = Location(path=path, archived=archived)
+        index[issue.id] = issue
     return index
 
 
-def load_index_with_errors(root: Path) -> tuple[dict[int, IssueRecord], list[tuple[Path, str]]]:
+def load_index_with_errors(root: Path) -> tuple[dict[int, Issue], list[tuple[Path, str]]]:
     """Like load_index but also returns (path, error message) for unparsable files."""
-    index: dict[int, IssueRecord] = {}
+    index: dict[int, Issue] = {}
     errors: list[tuple[Path, str]] = []
     for path, _dir_feature, archived in iter_issue_files(root):
         try:
@@ -138,16 +126,17 @@ def load_index_with_errors(root: Path) -> tuple[dict[int, IssueRecord], list[tup
         except model.ParseError as exc:
             errors.append((path, str(exc)))
             continue
-        index[issue.id] = IssueRecord(issue=issue, path=path, feature=issue.feature, archived=archived)
+        issue.location = Location(path=path, archived=archived)
+        index[issue.id] = issue
     return index, errors
 
 
-def get_issue(root: Path, issue_id: int) -> IssueRecord:
+def get_issue(root: Path, issue_id: int) -> Issue:
     index = load_index(root)
-    record = index.get(issue_id)
-    if record is None:
+    issue = index.get(issue_id)
+    if issue is None:
         raise IssuesError(f"no issue with id {issue_id}")
-    return record
+    return issue
 
 
 def create_issue(
@@ -164,7 +153,7 @@ def create_issue(
     assignee: str | None = None,
     acceptance_criteria: list[dict] | None = None,
     body: str | None = None,
-) -> IssueRecord:
+) -> Issue:
     issue_id = config_mod.allocate_id(root)
     slug = slug or model.slugify(title)
     now = datetime.now().replace(microsecond=0)
@@ -188,30 +177,31 @@ def create_issue(
     issues_dir.mkdir(parents=True, exist_ok=True)
     path = issues_dir / model.issue_filename(issue_id, slug)
     path.write_text(_serialize_checked(issue))
-    return IssueRecord(issue=issue, path=path, feature=feature, archived=False)
+    issue.location = Location(path=path, archived=False)
+    return issue
 
 
-def write_issue(record: IssueRecord, *, touch: bool = True) -> None:
+def write_issue(issue: Issue, *, touch: bool = True) -> None:
     if touch:
-        record.issue.updated = datetime.now().replace(microsecond=0)
-    record.path.write_text(_serialize_checked(record.issue))
+        issue.updated = datetime.now().replace(microsecond=0)
+    issue.location.path.write_text(_serialize_checked(issue))
 
 
-def archive_issue(root: Path, issue_id: int) -> IssueRecord:
+def archive_issue(root: Path, issue_id: int) -> Issue:
     """Move an issue's file into the single top-level `archive/` directory.
     Ids are globally unique and monotonic, so filenames never collide there
     even though issues from every feature land in the same place."""
-    record = get_issue(root, issue_id)
-    if record.archived:
-        return record
+    issue = get_issue(root, issue_id)
+    if issue.location.archived:
+        return issue
     archive_dir = _archive_dir(root)
     archive_dir.mkdir(parents=True, exist_ok=True)
-    dest = archive_dir / record.path.name
-    src_issues_dir = record.path.parent
-    record.path.rename(dest)
-    _prune_empty_feature_dir(src_issues_dir)
-    new_record = replace(record, path=dest, archived=True)
-    return new_record
+    src_path = issue.location.path
+    dest = archive_dir / src_path.name
+    src_path.rename(dest)
+    _prune_empty_feature_dir(src_path.parent)
+    issue.location = Location(path=dest, archived=True)
+    return issue
 
 
 def _prune_empty_feature_dir(issues_dir: Path) -> None:

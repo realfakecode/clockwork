@@ -141,7 +141,7 @@ def lint(root: Path, fix: bool = False) -> list[LintFinding]:
     for edge_attr, rule in (("blocked_by", "blocked-by-cycle"), ("parent", "parent-cycle")):
         cycle = deps_mod.find_cycle(index, edge_attr)
         if cycle:
-            path = index[cycle[0]].path if cycle[0] in index else None
+            path = index[cycle[0]].location.path if cycle[0] in index else None
             findings.append(
                 LintFinding(path, cycle[0], rule, "cycle: " + " -> ".join(str(c) for c in cycle))
             )

@@ -64,6 +64,17 @@ def _to_datetime(value) -> datetime:
 
 
 @dataclass
+class Location:
+    """Where an issue's file lives on disk. Set by the store when an issue is
+    read from or written to a file; `None` on an issue built from bare text
+    (`parse_issue_text`), which has no filesystem context yet. Never serialized
+    into frontmatter."""
+
+    path: Path
+    archived: bool
+
+
+@dataclass
 class Issue:
     id: int
     slug: str
@@ -80,6 +91,7 @@ class Issue:
     acceptance_criteria: list[dict] = field(default_factory=list)
     updated: datetime | None = None
     body: str = ""
+    location: Location | None = None
 
     def __post_init__(self):
         if self.updated is None:

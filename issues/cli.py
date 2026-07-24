@@ -14,7 +14,8 @@ from . import deps as deps_mod
 from . import lint as lint_mod
 from . import model
 from . import store as store_mod
-from .store import IssueRecord, IssuesError
+from .model import Issue
+from .store import IssuesError
 
 
 def read_text_arg(value: str | None) -> str | None:
@@ -31,8 +32,7 @@ def parse_id_list(value: str | None) -> list[int]:
     return [int(part.strip()) for part in value.split(",") if part.strip()]
 
 
-def record_to_dict(record: IssueRecord, *, include_body: bool = False) -> dict:
-    issue = record.issue
+def issue_to_dict(issue: Issue, *, include_body: bool = False) -> dict:
     data = {
         "id": issue.id,
         "slug": issue.slug,
@@ -46,9 +46,9 @@ def record_to_dict(record: IssueRecord, *, include_body: bool = False) -> dict:
         "acceptance_criteria": issue.acceptance_criteria,
         "created": issue.created.isoformat(),
         "updated": issue.updated.isoformat(),
-        "feature": record.feature,
-        "archived": record.archived,
-        "path": str(record.path),
+        "feature": issue.feature,
+        "archived": issue.location.archived,
+        "path": str(issue.location.path),
     }
     if include_body:
         data["body"] = issue.body
@@ -56,12 +56,11 @@ def record_to_dict(record: IssueRecord, *, include_body: bool = False) -> dict:
 
 
 def format_line(
-    record: IssueRecord,
-    index: dict[int, IssueRecord] | None = None,
+    issue: Issue,
+    index: dict[int, Issue] | None = None,
     config: dict | None = None,
 ) -> str:
-    issue = record.issue
-    bits = [f"#{issue.id}", issue.status, f"[{record.feature}]", issue.title]
+    bits = [f"#{issue.id}", issue.status, f"[{issue.feature}]", issue.title]
     extras = []
     if issue.assignee:
         extras.append(f"assignee={issue.assignee}")
@@ -71,12 +70,12 @@ def format_line(
         # Show only blockers that are still unresolved. Without index+config we
         # can't tell, so fall back to the raw declared list.
         if index is not None and config is not None:
-            blocking = deps_mod.unsatisfied_blockers(record, index, config)
+            blocking = deps_mod.unsatisfied_blockers(issue, index, config)
         else:
             blocking = list(issue.blocked_by)
         if blocking:
             extras.append("blocked_by=" + ",".join(str(b) for b in blocking))
-    if record.archived:
+    if issue.location.archived:
         extras.append("archived")
     line = "  ".join(bits)
     if extras:
@@ -85,13 +84,13 @@ def format_line(
 
 
 def print_records(
-    records: list[IssueRecord],
+    records: list[Issue],
     as_json: bool,
-    index: dict[int, IssueRecord] | None = None,
+    index: dict[int, Issue] | None = None,
     config: dict | None = None,
 ) -> None:
     if as_json:
-        print(json.dumps([record_to_dict(r) for r in records], indent=2))
+        print(json.dumps([issue_to_dict(r) for r in records], indent=2))
         return
     if not records:
         print("(none)")
@@ -173,7 +172,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not args.force:
         check_invariants(config, status, args.category, criteria)
 
-    record = store_mod.create_issue(
+    issue = store_mod.create_issue(
         root,
         args.feature,
         args.title,
@@ -188,9 +187,9 @@ def cmd_new(args: argparse.Namespace) -> int:
         body=read_text_arg(args.body),
     )
     if args.json:
-        print(json.dumps(record_to_dict(record), indent=2))
+        print(json.dumps(issue_to_dict(issue), indent=2))
     else:
-        print(f"created issue {record.id}: {record.path}")
+        print(f"created issue {issue.id}: {issue.location.path}")
     return 0
 
 
@@ -201,35 +200,35 @@ def cmd_list(args: argparse.Namespace) -> int:
     records = list(index.values())
 
     if not args.include_archived:
-        records = [r for r in records if not r.archived]
+        records = [r for r in records if not r.location.archived]
     if args.feature:
         records = [r for r in records if r.feature == args.feature]
     if args.status:
-        records = [r for r in records if r.issue.status == args.status]
+        records = [r for r in records if r.status == args.status]
     if args.category:
-        records = [r for r in records if r.issue.category == args.category]
+        records = [r for r in records if r.category == args.category]
     if args.label:
-        records = [r for r in records if args.label in r.issue.labels]
+        records = [r for r in records if args.label in r.labels]
     if args.assignee:
-        records = [r for r in records if r.issue.assignee == args.assignee]
+        records = [r for r in records if r.assignee == args.assignee]
     if args.parent is not None:
-        records = [r for r in records if r.issue.parent == args.parent]
+        records = [r for r in records if r.parent == args.parent]
 
     records.sort(key=lambda r: r.id)
     print_records(records, args.json, index, config)
     return 0
 
 
-def _print_issue(record: IssueRecord, as_json: bool) -> None:
+def _print_issue(issue: Issue, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(record_to_dict(record, include_body=True), indent=2))
+        print(json.dumps(issue_to_dict(issue, include_body=True), indent=2))
         return
-    issue = record.issue
     print(model.serialize_issue(issue, include_criteria=False), end="")
     if issue.acceptance_criteria:
         print("\nAcceptance criteria:")
         print(model.render_criteria(issue.acceptance_criteria))
-    print(f"\n(feature: {record.feature}, path: {record.path}, archived: {record.archived})")
+    loc = issue.location
+    print(f"\n(feature: {issue.feature}, path: {loc.path}, archived: {loc.archived})")
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -237,12 +236,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     index = store_mod.load_index(root)
     records = []
     for issue_id in args.ids:
-        record = index.get(issue_id)
-        if record is None:
+        issue = index.get(issue_id)
+        if issue is None:
             raise IssuesError(f"no issue with id {issue_id}")
-        records.append(record)
+        records.append(issue)
     if args.json:
-        payload = [record_to_dict(r, include_body=True) for r in records]
+        payload = [issue_to_dict(r, include_body=True) for r in records]
         print(json.dumps(payload if len(payload) > 1 else payload[0], indent=2))
         return 0
     for i, record in enumerate(records):
@@ -255,8 +254,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_edit(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     config = config_mod.load_config(root)
-    record = store_mod.get_issue(root, args.id)
-    issue = record.issue
+    issue = store_mod.get_issue(root, args.id)
 
     if args.title is not None:
         issue.title = args.title
@@ -286,7 +284,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
         if label in issue.labels:
             issue.labels.remove(label)
 
-    store_mod.write_issue(record)
+    store_mod.write_issue(issue)
     print(f"updated issue {issue.id}")
     return 0
 
@@ -302,14 +300,14 @@ def one_text_arg(positional: str | None, flagged: str | None, name: str) -> str 
 
 def cmd_comment(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
+    issue = store_mod.get_issue(root, args.id)
     text = one_text_arg(args.body, args.body_flag, "the comment body")
     if not text or not text.strip():
         raise IssuesError("comment body is empty (pass it as an argument or via '-' for stdin)")
     now = datetime.now().replace(microsecond=0)
-    record.issue.body = model.append_comment(record.issue.body, text.strip(), now)
-    store_mod.write_issue(record)
-    print(f"commented on issue {record.id}")
+    issue.body = model.append_comment(issue.body, text.strip(), now)
+    store_mod.write_issue(issue)
+    print(f"commented on issue {issue.id}")
     return 0
 
 
@@ -320,7 +318,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if args.done:
         index = store_mod.load_index(root)
         targets = [
-            r.id for r in index.values() if not r.archived and deps_mod.is_done(r, config)
+            r.id for r in index.values() if not r.location.archived and deps_mod.is_done(r, config)
         ]
         targets.sort()
         for issue_id in targets:
@@ -330,8 +328,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
     if args.id is None:
         raise IssuesError("pass an issue id or --done")
-    record = store_mod.archive_issue(root, args.id)
-    print(f"archived issue {record.id} -> {record.path}")
+    issue = store_mod.archive_issue(root, args.id)
+    print(f"archived issue {issue.id} -> {issue.location.path}")
     return 0
 
 
@@ -352,23 +350,23 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
 def cmd_block(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
+    issue = store_mod.get_issue(root, args.id)
     add = parse_id_list(args.on)
     for issue_id in add:
-        if issue_id not in record.issue.blocked_by:
-            record.issue.blocked_by.append(issue_id)
-    store_mod.write_issue(record)
-    print(f"issue {record.id} now blocked_by {record.issue.blocked_by}")
+        if issue_id not in issue.blocked_by:
+            issue.blocked_by.append(issue_id)
+    store_mod.write_issue(issue)
+    print(f"issue {issue.id} now blocked_by {issue.blocked_by}")
     return 0
 
 
 def cmd_unblock(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
+    issue = store_mod.get_issue(root, args.id)
     remove = set(parse_id_list(args.on))
-    record.issue.blocked_by = [b for b in record.issue.blocked_by if b not in remove]
-    store_mod.write_issue(record)
-    print(f"issue {record.id} now blocked_by {record.issue.blocked_by}")
+    issue.blocked_by = [b for b in issue.blocked_by if b not in remove]
+    store_mod.write_issue(issue)
+    print(f"issue {issue.id} now blocked_by {issue.blocked_by}")
     return 0
 
 
@@ -392,7 +390,7 @@ def cmd_blocked(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 [
-                    {**record_to_dict(record), "unsatisfied_blocked_by": unsatisfied}
+                    {**issue_to_dict(record), "unsatisfied_blocked_by": unsatisfied}
                     for record, unsatisfied in pairs
                 ],
                 indent=2,
@@ -427,19 +425,18 @@ def cmd_children(args: argparse.Namespace) -> int:
 
 def cmd_parent(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
-    if record.issue.parent is None:
+    issue = store_mod.get_issue(root, args.id)
+    if issue.parent is None:
         raise IssuesError(f"issue {args.id} has no parent")
-    parent_record = store_mod.get_issue(root, record.issue.parent)
-    _print_issue(parent_record, args.json)
+    parent = store_mod.get_issue(root, issue.parent)
+    _print_issue(parent, args.json)
     return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     config = config_mod.load_config(root)
-    record = store_mod.get_issue(root, args.id)
-    issue = record.issue
+    issue = store_mod.get_issue(root, args.id)
     if args.status is None:
         print(issue.status)
         return 0
@@ -448,17 +445,17 @@ def cmd_status(args: argparse.Namespace) -> int:
         check_transition(config, issue.status, args.status)
         check_invariants(config, args.status, issue.category, issue.acceptance_criteria)
     issue.status = args.status
-    store_mod.write_issue(record)
-    print(f"issue {record.id} status -> {args.status}")
+    store_mod.write_issue(issue)
+    print(f"issue {issue.id} status -> {args.status}")
     return 0
 
 
 def cmd_claim(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
-    record.issue.assignee = args.as_name or getpass.getuser()
-    store_mod.write_issue(record)
-    print(f"issue {record.id} claimed by {record.issue.assignee}")
+    issue = store_mod.get_issue(root, args.id)
+    issue.assignee = args.as_name or getpass.getuser()
+    store_mod.write_issue(issue)
+    print(f"issue {issue.id} claimed by {issue.assignee}")
     return 0
 
 
@@ -471,7 +468,7 @@ def cmd_release(args: argparse.Namespace) -> int:
         targets = [
             r
             for r in index.values()
-            if not r.archived and r.issue.assignee and (not args.assignee or r.issue.assignee == args.assignee)
+            if not r.location.archived and r.assignee and (not args.assignee or r.assignee == args.assignee)
         ]
     else:
         if not args.ids:
@@ -484,9 +481,9 @@ def cmd_release(args: argparse.Namespace) -> int:
             targets.append(record)
 
     for record in targets:
-        record.issue.assignee = None
-        if not args.keep_status and config_mod.status_bucket(config, record.issue.status) != "done":
-            record.issue.status = config["unclaim_status"]
+        record.assignee = None
+        if not args.keep_status and config_mod.status_bucket(config, record.status) != "done":
+            record.status = config["unclaim_status"]
         store_mod.write_issue(record)
 
     ids = ", ".join(str(r.id) for r in sorted(targets, key=lambda r: r.id)) or "(none)"
@@ -499,8 +496,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     config = config_mod.load_config(root)
     status = args.status or "done"
     check_status_known(config, status)
-    record = store_mod.get_issue(root, args.id)
-    issue = record.issue
+    issue = store_mod.get_issue(root, args.id)
     if not args.force:
         check_transition(config, issue.status, status)
         check_invariants(config, status, issue.category, issue.acceptance_criteria)
@@ -509,15 +505,15 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         now = datetime.now().replace(microsecond=0)
         issue.body = model.append_comment(issue.body, answer.strip(), now)
     issue.status = status
-    store_mod.write_issue(record)
-    print(f"issue {record.id} resolved -> {status}")
+    store_mod.write_issue(issue)
+    print(f"issue {issue.id} resolved -> {status}")
     return 0
 
 
 def cmd_criteria(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
-    criteria = record.issue.acceptance_criteria
+    issue = store_mod.get_issue(root, args.id)
+    criteria = issue.acceptance_criteria
     changed = False
     added: list[dict] = []
 
@@ -537,7 +533,7 @@ def cmd_criteria(args: argparse.Namespace) -> int:
         changed = True
 
     if changed:
-        store_mod.write_issue(record)
+        store_mod.write_issue(issue)
 
     if args.json:
         print(json.dumps(criteria, indent=2))
@@ -559,23 +555,23 @@ def cmd_triage(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     config = config_mod.load_config(root)
     index = store_mod.load_index(root)
-    active = [r for r in index.values() if not r.archived]
+    active = [r for r in index.values() if not r.location.archived]
 
     buckets = {
         "needs-triage": sorted(
-            (r for r in active if r.issue.status == "needs-triage"),
-            key=lambda r: r.issue.created,
+            (r for r in active if r.status == "needs-triage"),
+            key=lambda r: r.created,
         ),
         "needs-info": sorted(
-            (r for r in active if r.issue.status == "needs-info"),
-            key=lambda r: r.issue.created,
+            (r for r in active if r.status == "needs-info"),
+            key=lambda r: r.created,
         ),
     }
 
     if args.json:
         print(
             json.dumps(
-                {name: [record_to_dict(r) for r in records] for name, records in buckets.items()},
+                {name: [issue_to_dict(r) for r in records] for name, records in buckets.items()},
                 indent=2,
             )
         )
