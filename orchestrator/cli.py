@@ -51,16 +51,37 @@ def build_parser() -> argparse.ArgumentParser:
                         help="most follow-up tickets one milestone review may file in a single "
                         "pass (default: 3)")
     parser.add_argument("--model",
-                        help="model id passed to `pi --model` (e.g. provider/model)")
+                        help="model id passed to `pi --model` (e.g. provider/model), used "
+                        "for every agent role unless overridden below")
+    parser.add_argument("--triage-model",
+                        help="model id for the triage agent (default: --model)")
+    parser.add_argument("--verification-model",
+                        help="model id for the post-run validator agent (default: --model)")
+    parser.add_argument("--review-model",
+                        help="model id for milestone review + retrospective agents "
+                        "(default: --model)")
     parser.add_argument("--once", action="store_true",
                         help="dispatch a single ticket and stop")
+    parser.add_argument("--ticket", type=int,
+                        help="start on this ticket instead of the frontier's next ready "
+                        "one (must be ready-for-agent, or any status with --verify-only). "
+                        "Frontier order resumes afterward; combine with --once to touch "
+                        "only this ticket")
+    parser.add_argument("--verify-only", action="store_true",
+                        help="skip running the worker and go straight to validating "
+                        "--ticket's current worktree — for resuming after a worker "
+                        "finished but the loop was interrupted before judging it. "
+                        "Requires --ticket")
     parser.add_argument("--dry-run", action="store_true",
                         help="show what would be dispatched without running the worker")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.verify_only and args.ticket is None:
+        parser.error("--verify-only requires --ticket")
     try:
         return asyncio.run(Clockwork(args).run())
     except IssuesError as exc:

@@ -50,7 +50,16 @@ class Clockwork:
         self.args = args
         self.cwd = Path.cwd()
         self.command = _pi_command(args.model)
+        # Per-role overrides fall back to --model, then to no model flag at all.
+        # getattr defaults keep a hand-built argparse.Namespace (as in the test
+        # suite) working without every role's attribute present.
+        self.triage_command = _pi_command(getattr(args, "triage_model", None) or args.model)
+        self.verification_command = _pi_command(
+            getattr(args, "verification_model", None) or args.model)
+        self.review_command = _pi_command(getattr(args, "review_model", None) or args.model)
         self.log_path = _scratch_dir(self.cwd) / ".clockwork-log.jsonl"
+        # Consumed by `_take_forced_ticket` on the loop's first iteration only.
+        self._forced_ticket = getattr(args, "ticket", None)
 
     # -- the seam log ------------------------------------------------------
 
@@ -81,6 +90,17 @@ class Clockwork:
             if record.status == "ready-for-agent":
                 return record
         return None
+
+    def _take_forced_ticket(self) -> issues.Issue | None:
+        """Consume `--ticket` on the loop's first iteration only: look it up and
+        hand it back as this step's selection, bypassing frontier order. None on
+        every later call (or when `--ticket` wasn't given) — normal frontier order
+        resumes right after, and `--once` combines with it to mean "only this
+        ticket." Raises IssuesError if the id doesn't exist."""
+        ticket_id, self._forced_ticket = self._forced_ticket, None
+        if ticket_id is None:
+            return None
+        return issues.show(ticket_id, cwd=self.cwd)
 
     def _pick_triage_ticket(self) -> issues.Issue | None:
         """A bare ticket on the unclaimed frontier awaiting specification. Only
@@ -259,13 +279,13 @@ class Clockwork:
             issue, self.args.design, self.args.vocab, summary,
             empty_diff=not self._has_code_changes(),
         )
-        reply = await worker.drive(self.command, str(self.cwd), prompt,
+        reply = await worker.drive(self.verification_command, str(self.cwd), prompt,
                                     label=f"validator #{ticket_id}")
         verdict, reason = worker.parse_verdict(reply)
         if verdict == "none":
             self.log("validate", ticket=ticket_id, stage="agent", ok=False,
                      reason="no verdict marker — re-running validator")
-            reply = await worker.drive(self.command, str(self.cwd), prompt,
+            reply = await worker.drive(self.verification_command, str(self.cwd), prompt,
                                        label=f"validator #{ticket_id} (retry)")
             verdict, reason = worker.parse_verdict(reply)
         passed = verdict == "pass"
@@ -305,7 +325,7 @@ class Clockwork:
         self.log("triage", ticket=ticket_id, stage="start")
         issue = issues.show(ticket_id, cwd=self.cwd)
         prompt = worker.build_triage_prompt(issue, self.args.design, self.args.vocab)
-        await worker.drive(self.command, str(self.cwd), prompt,
+        await worker.drive(self.triage_command, str(self.cwd), prompt,
                            label=f"triage #{ticket_id}")
 
         status = issues.show(ticket_id, cwd=self.cwd).status
@@ -394,7 +414,7 @@ class Clockwork:
             max_tickets=self.args.milestone_max_tickets,
             can_file_tickets=self.args.milestone_file_tickets,
         )
-        await worker.drive(self.command, str(self.cwd), prompt,
+        await worker.drive(self.review_command, str(self.cwd), prompt,
                            label=f"milestone-review #{map_id}")
 
         new_kids = [k for k in issues.children(map_id, cwd=self.cwd)
@@ -425,7 +445,7 @@ class Clockwork:
         excerpt = self._effort_log_excerpt([map_id, *(c.id for c in children)])
         prompt = worker.build_retrospective_prompt(
             map_issue, children, self.args.design, self.args.vocab, excerpt)
-        await worker.drive(self.command, str(self.cwd), prompt,
+        await worker.drive(self.review_command, str(self.cwd), prompt,
                            label=f"retrospective #{map_id}")
 
     def _effort_log_excerpt(self, ids: list[int], tail: int = 4000) -> str:
@@ -454,9 +474,12 @@ class Clockwork:
                      threshold=args.queue_threshold)
             return "stop:queue-threshold"
 
-        # 2. Pick the first ready-for-agent ticket on the unclaimed frontier.
-        #    If none, fall back to triaging a bare ticket so the frontier refills.
-        ticket = self._pick_ticket()
+        # 2. --ticket forces the very first iteration's pick; every later
+        #    iteration (and every run without --ticket) picks the first
+        #    ready-for-agent ticket on the unclaimed frontier. If none, fall
+        #    back to triaging a bare ticket so the frontier refills.
+        forced = self._take_forced_ticket()
+        ticket = forced if forced is not None else self._pick_ticket()
         if ticket is None:
             triage_ticket = self._pick_triage_ticket()
             if triage_ticket is not None:
@@ -481,9 +504,26 @@ class Clockwork:
             self.log("halt", reason="no-ready")
             return "stop:no-ready"
         ticket_id = ticket.id
+        attempts = issues.read_attempts(ticket)
+
+        if forced is not None and not args.verify_only and ticket.status != "ready-for-agent":
+            raise issues.IssuesError(
+                f"--ticket {ticket_id} is '{ticket.status}', not ready-for-agent "
+                "(pass --verify-only to judge its current worktree instead of dispatching it)"
+            )
+
+        # 2a. --verify-only skips the worker entirely and judges whatever is
+        #     already sitting in the worktree for --ticket — for resuming after
+        #     the worker finished but the loop was interrupted before validating.
+        if forced is not None and args.verify_only:
+            if args.dry_run:
+                self.log("dry-run", would="verify", ticket=ticket_id)
+                return "stop:dry-run"
+            self.log("verify", ticket=ticket_id, stage="start")
+            await self._validate_and_finish(ticket_id, attempts)
+            return "continue"
 
         # 3. Attempt cap — a cursed ticket shouldn't burn the whole run.
-        attempts = issues.read_attempts(ticket)
         if attempts >= args.max_attempts:
             if args.dry_run:
                 self.log("dry-run", would="escalate", ticket=ticket_id, attempts=attempts)
@@ -519,7 +559,8 @@ class Clockwork:
         args = self.args
         self.log("start", design=args.design, feature=args.feature,
                  max_attempts=args.max_attempts, queue_threshold=args.queue_threshold,
-                 max_dispatches=args.max_dispatches, once=args.once, dry_run=args.dry_run)
+                 max_dispatches=args.max_dispatches, once=args.once, dry_run=args.dry_run,
+                 ticket=args.ticket, verify_only=args.verify_only)
         dispatches = 0
         while True:
             if dispatches >= args.max_dispatches:
