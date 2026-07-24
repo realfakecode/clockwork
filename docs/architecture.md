@@ -163,7 +163,7 @@ Both defaults resolve against the target project's working directory. The templa
 for them live in [`project-template/docs/`](../project-template/docs/); how to write
 canon lives in the `domain-modeling` skill.
 
-## Not built yet
+## Not currently planned
 
-Scheduler/cron auto-dispatch, parallel dispatch, and a structured schema for
-escalations (collect real ones first, then design it).
+- Parallel dispatch. Keeping things serial to avoid race conditions and the code
+  that would need to resolve them. Also harder to follow as a human.

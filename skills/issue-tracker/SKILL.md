@@ -60,10 +60,7 @@ non-empty **acceptance-criteria** checklist.
   archive/<id>-<slug>.md             # archived issues, all features together
 ```
 
-`archive/` is a single top-level directory, not per-feature — ids are global and
-monotonic, so archived filenames never collide even though every feature's archived
-issues land in the same place. An issue's feature is a frontmatter field (`feature:`),
-not something inferred from its path, so it survives the move to `archive/`.
+IDs are global and monotonic.
 
 Never hand-edit frontmatter or filenames — every field has a command that writes it
 correctly. Editing body prose outside the frontmatter (the title/question/spec text and
