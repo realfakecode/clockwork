@@ -319,6 +319,67 @@ def cmd_children(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_path(args: argparse.Namespace) -> int:
+    root = store_mod.find_root()
+    for issue_id in args.ids:
+        print(store_mod.get_issue(root, issue_id).location.path)
+    return 0
+
+
+def cmd_tree(args: argparse.Namespace) -> int:
+    root = store_mod.find_root()
+    config = config_mod.load_config(root)
+    index = store_mod.load_index(root)
+
+    records = list(index.values())
+    if not args.include_archived:
+        records = [r for r in records if not r.location.archived]
+    if args.feature:
+        records = [r for r in records if r.feature == args.feature]
+
+    visible = {r.id for r in records}
+    children: dict[int | None, list[Issue]] = {}
+    for record in records:
+        # An issue whose parent is filtered out (or absent) is rooted here.
+        key = record.parent if record.parent in visible else None
+        children.setdefault(key, []).append(record)
+    for kids in children.values():
+        kids.sort(key=lambda i: i.id)
+
+    if args.id is not None:
+        if args.id not in index:
+            raise IssuesError(f"no issue with id {args.id}")
+        roots = [index[args.id]]
+    else:
+        roots = children.get(None, [])
+
+    if not roots:
+        print("(none)")
+        return 0
+
+    seen: set[int] = set()
+
+    def walk(issue: Issue, prefix: str, connector: str, child_prefix: str) -> None:
+        if issue.id in seen:  # cycles are caught by lint; guard anyway
+            print(prefix + connector + f"#{issue.id} (cycle)")
+            return
+        seen.add(issue.id)
+        print(prefix + connector + format_line(issue, index, config))
+        kids = children.get(issue.id, [])
+        for i, kid in enumerate(kids):
+            last = i == len(kids) - 1
+            walk(
+                kid,
+                child_prefix,
+                "└─ " if last else "├─ ",
+                child_prefix + ("   " if last else "│  "),
+            )
+
+    for root_issue in roots:
+        walk(root_issue, "", "", "")
+    return 0
+
+
 def cmd_parent(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     issue = store_mod.get_issue(root, args.id)
@@ -559,6 +620,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_parent)
+
+    p = sub.add_parser("tree", help="show issues as a parent/child tree")
+    p.add_argument("id", type=int, nargs="?", help="root the tree at this issue")
+    p.add_argument("--feature")
+    p.add_argument("--include-archived", action="store_true")
+    p.set_defaults(func=cmd_tree)
+
+    p = sub.add_parser("path", help="print the file path of one or more issues")
+    p.add_argument("ids", type=int, nargs="+", metavar="id")
+    p.set_defaults(func=cmd_path)
 
     p = sub.add_parser("status", help="set an issue's status (or show it if none given)")
     p.add_argument("id", type=int)

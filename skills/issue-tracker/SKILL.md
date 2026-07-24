@@ -90,6 +90,11 @@ correctly. Editing body prose outside the frontmatter (the title/question/spec t
 - **`ready [--unclaimed --feature <f> --json]`** — the todo-bucket frontier with all
   `blocked_by` satisfied.
 - **`block <id> --on 1,2`** / **`blocked`** / **`blocking <id>`** — dependency edges/queries.
+- **`children <id>`** / **`parent <id>`** — the child/parent edges of one issue.
+- **`tree [<id>] [--feature <f> --include-archived]`** — the parent/child hierarchy as an
+  indented tree; give an `<id>` to root it at that issue's subtree.
+- **`path <id> [<id> ...]`** — print each issue's file path (one per line), e.g.
+  `vim $(issues path 3)`.
 - **`lint [--fix]`** / **`archive <id>`** / **`archive --done`**.
 
 ## Gotchas

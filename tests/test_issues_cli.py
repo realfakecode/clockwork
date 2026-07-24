@@ -155,6 +155,59 @@ def test_archive_keeps_feature_dir_with_other_issues(repo, capsys):
     assert feature_dir.is_dir()
 
 
+# -- path -----------------------------------------------------------------
+
+def test_path_prints_issue_file(repo, capsys):
+    iid = new_issue(capsys, "auth", "Login")
+    code, out = run(capsys, ["path", str(iid)])
+    assert code == 0
+    printed = out.strip()
+    assert printed.endswith(".md")
+    assert (repo / printed).exists() or printed.startswith(str(repo))
+
+
+def test_path_multiple_ids_one_per_line(repo, capsys):
+    a = new_issue(capsys, "auth", "Login")
+    b = new_issue(capsys, "billing", "Invoice")
+    out = run(capsys, ["path", str(a), str(b)])[1]
+    assert len(out.strip().splitlines()) == 2
+
+
+def test_path_unknown_id_errors(repo, capsys):
+    assert run(capsys, ["path", "999"])[0] == 1
+
+
+# -- tree -----------------------------------------------------------------
+
+def test_tree_nests_children_under_parents(repo, capsys):
+    parent = new_issue(capsys, "epic", "Auth epic")
+    child = new_issue(capsys, "auth", "Login", parent=str(parent))
+    out = run(capsys, ["tree"])[1]
+    lines = out.splitlines()
+    parent_line = next(i for i, l in enumerate(lines) if f"#{parent}" in l)
+    child_line = next(i for i, l in enumerate(lines) if f"#{child}" in l)
+    assert child_line > parent_line
+    assert lines[parent_line].startswith("#")  # root, no indent
+    assert "─" in lines[child_line]  # branch connector
+
+
+def test_tree_rooted_at_id_shows_only_subtree(repo, capsys):
+    parent = new_issue(capsys, "epic", "Auth epic")
+    child = new_issue(capsys, "auth", "Login", parent=str(parent))
+    other = new_issue(capsys, "misc", "Standalone")
+    out = run(capsys, ["tree", str(parent)])[1]
+    assert f"#{child}" in out
+    assert f"#{other}" not in out
+
+
+def test_tree_unknown_root_errors(repo, capsys):
+    assert run(capsys, ["tree", "999"])[0] == 1
+
+
+def test_tree_empty_prints_none(repo, capsys):
+    assert run(capsys, ["tree"])[1].strip() == "(none)"
+
+
 # -- default config -------------------------------------------------------
 
 def test_open_status_is_gone(repo):
