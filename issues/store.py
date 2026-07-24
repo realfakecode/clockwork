@@ -207,6 +207,19 @@ def archive_issue(root: Path, issue_id: int) -> IssueRecord:
     archive_dir = _archive_dir(root)
     archive_dir.mkdir(parents=True, exist_ok=True)
     dest = archive_dir / record.path.name
+    src_issues_dir = record.path.parent
     record.path.rename(dest)
+    _prune_empty_feature_dir(src_issues_dir)
     new_record = replace(record, path=dest, archived=True)
     return new_record
+
+
+def _prune_empty_feature_dir(issues_dir: Path) -> None:
+    """After the last active issue leaves a feature's `issues/`, drop the now-empty
+    scaffolding: the `issues/` directory and its parent feature directory, each only
+    if empty. A feature directory holding anything else is left untouched."""
+    for path in (issues_dir, issues_dir.parent):
+        try:
+            path.rmdir()
+        except OSError:
+            break

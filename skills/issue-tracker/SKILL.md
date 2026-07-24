@@ -23,7 +23,7 @@ use it for multi-line text via a heredoc. Most read commands take `--json`.
 The default config (written in full to `.scratch/.issues.yaml` by `issues init`) defines
 three buckets:
 
-- **todo bucket**: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `open`
+- **todo bucket**: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`
 - **active bucket**: `in-progress`, `needs-decision`, `wayfinding`
 - **done bucket**: `done`, `wontfix`
 
@@ -43,7 +43,6 @@ ready-for-human -> in-progress, ready-for-agent, needs-info, wontfix
 in-progress     -> done, ready-for-agent, ready-for-human, needs-decision, wontfix
 needs-decision  -> ready-for-agent, ready-for-human, wontfix
 wayfinding      -> done, wontfix
-open            -> in-progress, ready-for-agent, ready-for-human, wontfix, needs-info
 done            -> (terminal)
 wontfix         -> needs-triage
 ```
@@ -75,16 +74,19 @@ correctly. Editing body prose outside the frontmatter (the title/question/spec t
 - **`new <feature> <title>`** — `--category --status --criterion "<text>"` (repeatable)
   `--label --parent --blocked-by 1,2 --body - --force --json`.
 - **`list`** — `--status --feature --category --label --assignee --json`.
-- **`show <id>`** — `--json` for frontmatter + body (carries `## Comments`).
+- **`show <id> [<id> ...]`** — one or more issues; `--json` for frontmatter + body
+  (carries `## Comments`).
 - **`edit <id>`** — `--add-label/--remove-label --status --category --body -`.
-- **`comment <id> --body -`** — appends a timestamped line under `## Comments`.
+- **`comment <id> "<text>"`** — appends a timestamped line under `## Comments`. The text
+  may be a positional argument, `--body`, or `-`/`--body -` for stdin.
 - **`criteria <id>`** — `--add "<text>"` / `--check N` / `--uncheck N` / `--remove N`
   (0-indexed). No flags prints the checklist.
-- **`status <id> <status>`** / **`claim <id> --as <name>`** /
+- **`status <id> [<status>]`** — set the status, or print the current one when `<status>`
+  is omitted. **`claim <id> --as <name>`** /
   **`release <id> [--keep-status]`** (clears assignee; resets to `ready-for-agent` unless
   `--keep-status`).
-- **`resolve <id> --answer "<text>" [--status <s>]`** — comments the answer, sets status
-  (default `done`).
+- **`resolve <id> "<text>" [--status <s>]`** — comments the answer (positional, `--answer`,
+  or stdin) and sets status (default `done`).
 - **`ready [--unclaimed --feature <f> --json]`** — the todo-bucket frontier with all
   `blocked_by` satisfied.
 - **`block <id> --on 1,2`** / **`blocked`** / **`blocking <id>`** — dependency edges/queries.

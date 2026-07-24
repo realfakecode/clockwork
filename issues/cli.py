@@ -234,8 +234,21 @@ def _print_issue(record: IssueRecord, as_json: bool) -> None:
 
 def cmd_show(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
-    record = store_mod.get_issue(root, args.id)
-    _print_issue(record, args.json)
+    index = store_mod.load_index(root)
+    records = []
+    for issue_id in args.ids:
+        record = index.get(issue_id)
+        if record is None:
+            raise IssuesError(f"no issue with id {issue_id}")
+        records.append(record)
+    if args.json:
+        payload = [record_to_dict(r, include_body=True) for r in records]
+        print(json.dumps(payload if len(payload) > 1 else payload[0], indent=2))
+        return 0
+    for i, record in enumerate(records):
+        if i:
+            print()
+        _print_issue(record, False)
     return 0
 
 
@@ -278,12 +291,21 @@ def cmd_edit(args: argparse.Namespace) -> int:
     return 0
 
 
+def one_text_arg(positional: str | None, flagged: str | None, name: str) -> str | None:
+    """Resolve a payload that may arrive as a positional or a flag. At most one
+    source may be set; either can be `-` to read stdin."""
+    provided = [v for v in (positional, flagged) if v is not None]
+    if len(provided) > 1:
+        raise IssuesError(f"pass {name} once — as a positional argument or the flag, not both")
+    return read_text_arg(provided[0]) if provided else None
+
+
 def cmd_comment(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     record = store_mod.get_issue(root, args.id)
-    text = read_text_arg(args.body)
+    text = one_text_arg(args.body, args.body_flag, "the comment body")
     if not text or not text.strip():
-        raise IssuesError("comment body is empty (pass --body or pipe via --body -)")
+        raise IssuesError("comment body is empty (pass it as an argument or via '-' for stdin)")
     now = datetime.now().replace(microsecond=0)
     record.issue.body = model.append_comment(record.issue.body, text.strip(), now)
     store_mod.write_issue(record)
@@ -416,9 +438,12 @@ def cmd_parent(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     root = store_mod.find_root()
     config = config_mod.load_config(root)
-    check_status_known(config, args.status)
     record = store_mod.get_issue(root, args.id)
     issue = record.issue
+    if args.status is None:
+        print(issue.status)
+        return 0
+    check_status_known(config, args.status)
     if not args.force:
         check_transition(config, issue.status, args.status)
         check_invariants(config, args.status, issue.category, issue.acceptance_criteria)
@@ -479,7 +504,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     if not args.force:
         check_transition(config, issue.status, status)
         check_invariants(config, status, issue.category, issue.acceptance_criteria)
-    answer = read_text_arg(args.answer)
+    answer = one_text_arg(args.answer, args.answer_flag, "the answer")
     if answer and answer.strip():
         now = datetime.now().replace(microsecond=0)
         issue.body = model.append_comment(issue.body, answer.strip(), now)
@@ -619,8 +644,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)
 
-    p = sub.add_parser("show", help="show one issue")
-    p.add_argument("id", type=int)
+    p = sub.add_parser("show", help="show one or more issues")
+    p.add_argument("ids", type=int, nargs="+", metavar="id")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_show)
 
@@ -640,7 +665,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("comment", help="append a comment")
     p.add_argument("id", type=int)
-    p.add_argument("--body")
+    p.add_argument("body", nargs="?", help="comment text (or '-' to read stdin)")
+    p.add_argument("--body", dest="body_flag", help="comment text; '-' reads stdin")
     p.set_defaults(func=cmd_comment)
 
     p = sub.add_parser("archive", help="archive an issue (or all done issues)")
@@ -689,9 +715,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_parent)
 
-    p = sub.add_parser("status", help="set an issue's status")
+    p = sub.add_parser("status", help="set an issue's status (or show it if none given)")
     p.add_argument("id", type=int)
-    p.add_argument("status")
+    p.add_argument("status", nargs="?", help="new status; omit to print the current one")
     p.add_argument("--force", action="store_true", help="skip transition/invariant checks")
     p.set_defaults(func=cmd_status)
 
@@ -709,7 +735,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("resolve", help="mark an issue done with an optional answer comment")
     p.add_argument("id", type=int)
-    p.add_argument("--answer")
+    p.add_argument("answer", nargs="?", help="answer comment (or '-' to read stdin)")
+    p.add_argument("--answer", dest="answer_flag", help="answer comment; '-' reads stdin")
     p.add_argument("--status")
     p.add_argument("--force", action="store_true", help="skip transition/invariant checks")
     p.set_defaults(func=cmd_resolve)

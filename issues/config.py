@@ -16,7 +16,7 @@ def default_config() -> dict:
     return {
         "next_id": 1,
         "statuses": {
-            "todo": ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "open"],
+            "todo": ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human"],
             # `needs-decision` is the escalation state: it lives in `active`, not
             # `todo`, so `issues ready` (todo bucket only) never re-dispatches an
             # escalated ticket while it waits on a human design decision.
@@ -45,7 +45,6 @@ def default_config() -> dict:
             # A map is created directly in `wayfinding` and only ever closes once its
             # effort is executed; nothing transitions into it.
             "wayfinding": ["done", "wontfix"],
-            "open": ["in-progress", "ready-for-agent", "ready-for-human", "wontfix", "needs-info"],
             "done": [],
             "wontfix": ["needs-triage"],
         },
